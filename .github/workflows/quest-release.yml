@@ -3,7 +3,18 @@ name: Quest preview release
 on:
   push:
     tags: ['v*']
+    branches: [main]
+    paths: ['.github/workflows/quest-release.yml']
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing immutable release tag to publish'
+        default: v0.10.4
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag || 'v0.10.4' }}
 
 permissions:
   contents: write
@@ -14,22 +25,26 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Verify the Quest Gradle Wrapper
+        run: |
+          echo '497c8c2a7e5031f6aa847f88104aa80a93532ec32ee17bdb8d1d2f67a194a9c7  android/gradle/wrapper/gradle-wrapper.jar' | sha256sum --check --strict
       - name: Validate release tag
         shell: bash
         run: |
           set -euo pipefail
           version=$(sed -n 's/^val questVersion = "\([^"]*\)"/\1/p' android/app/build.gradle.kts)
-          test "$GITHUB_REF_NAME" = "v${version%-quest-dev}"
-          test -f ".github/releases/$GITHUB_REF_NAME.md"
+          test "$RELEASE_TAG" = "v${version%-quest-dev}"
+          test -f ".github/releases/$RELEASE_TAG.md"
       - name: Install Android build tools
         shell: bash
         run: |
@@ -37,6 +52,8 @@ jobs:
             'platforms;android-35' 'build-tools;35.0.0' \
             'ndk;27.0.12077973' 'cmake;3.22.1'
       - name: Run native regression tests
+        env:
+          CXX: clang++
         run: bash scripts/test_quest_math.sh
       - name: Build signed ARM64 preview
         run: bash android/gradlew -p android assembleDebug --console=plain
@@ -46,12 +63,12 @@ jobs:
           set -euo pipefail
           python3 scripts/verify_quest_apk.py android/app/build/outputs/apk/debug/app-debug.apk
           mkdir -p dist
-          cp android/app/build/outputs/apk/debug/app-debug.apk "dist/rechan-vr-standalone-${GITHUB_REF_NAME#v}-quest3.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "dist/rechan-vr-standalone-${RELEASE_TAG#v}-quest3.apk"
           cd dist
           sha256sum *.apk > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: quest-preview-${{ github.ref_name }}
+          name: quest-preview-${{ env.RELEASE_TAG }}
           path: dist/
       - name: Publish GitHub preview release
         env:
@@ -59,7 +76,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$GITHUB_REF_NAME" dist/*.apk dist/SHA256SUMS \
+          gh release create "$RELEASE_TAG" dist/*.apk dist/SHA256SUMS \
             --verify-tag --prerelease \
-            --title "ReChan VR Standalone ${GITHUB_REF_NAME#v} — Quest 3 preview" \
-            --notes-file ".github/releases/$GITHUB_REF_NAME.md"
+            --title "ReChan VR Standalone ${RELEASE_TAG#v} — Quest 3 preview" \
+            --notes-file ".github/releases/$RELEASE_TAG.md"
