@@ -643,7 +643,11 @@ void MoviePlayer::Render() {
             }
 
             const f32 sourceAspect = srcW / srcH;
+#if defined(RC_PLATFORM_QUEST)
+            const f32 desiredAspect = 4.0f / 3.0f;
+#else
             const f32 desiredAspect = 16.0f / 9.0f;
+#endif
 
             f32 u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
             if (sourceAspect < desiredAspect) {
@@ -689,8 +693,13 @@ void MoviePlayer::Render() {
             ScreenDraw::DrawFullscreenAdvanced(
                 videoTexture,
                 frameWidth / (f32)frameHeight,
+#if defined(RC_PLATFORM_QUEST)
+                4.0f / 3.0f,
+                false);
+#else
                 16.0f / 9.0f,
                 true);
+#endif
         }
     }
 }

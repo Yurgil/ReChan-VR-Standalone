@@ -640,3 +640,60 @@ Spiegelwelt:
 
 [0xC131692D]
 Druecke <ACT:OPEN_CLOSE_MENU>, um das Hauptmenue zu oeffnen.
+
+[FE_QMR]
+Mixed Reality
+
+[FE_QSZ]
+MR-Fenstergroesse
+
+[FE_QRI]
+Room interaction
+
+[FE_QJI]
+Interact with Jackie
+
+[FE_QRST]
+Room status
+
+[FE_QHELP]
+Activate in MR with both stick clicks.
+
+[FE_QRESCAN]
+Scan room again
+
+[FE_QOFF]
+Room: off
+
+[FE_QNA]
+Room: unsupported
+
+[FE_QWAIT]
+Room: waiting for interaction mode
+
+[FE_QPER]
+Room: awaiting permission
+
+[FE_QDEN]
+Room: permission denied
+
+[FE_QLOAD]
+Room: loading saved scan
+
+[FE_QSCAN]
+Room: system scan in progress
+
+[FE_QLOC]
+Room: locating surfaces
+
+[FE_QREADY]
+Room: ready
+
+[FE_QCANCEL]
+Room: scan cancelled
+
+[FE_QMISS]
+Room: no matching scan
+
+[FE_QERR]
+Room: unavailable, retry scan

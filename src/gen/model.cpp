@@ -1,4 +1,5 @@
 #include "gen/model.h"
+#include "extra/questcharacter.h"
 #include "gen/animmgr.h"
 #include "gen/animmat.h"
 #include "gen/animstruct.h"
@@ -29,7 +30,6 @@
 #include <vector>
 
 #include "extra/shadowcsm.h"
-
 // Draws a mesh buffer, using the real-texture rendering path (one bound real
 // 2D texture per material, sub-range draws) when it's enabled and the mesh
 // has grouped index ranges; otherwise falls back to the single legacy draw
@@ -74,6 +74,12 @@ static void DrawTexturedMesh(pddiPrimBuffer* buffer
 
 #if MODERN_GRAPHICS
 static bool ShouldReceiveModelShadows(const Model* model, const Thing* owner) {
+#if defined(RC_PLATFORM_QUEST)
+    // Models retain their authored vertex lighting. Applying the low-resolution
+    // mobile shadow map on top darkens skin and causes self-shadow artifacts.
+    // They still cast dynamic shadows onto the environment.
+    return false;
+#else
     return model
         && owner
         && !ShadowCSM::IsCasterPrepass()
@@ -81,6 +87,7 @@ static bool ShouldReceiveModelShadows(const Model* model, const Thing* owner) {
         && (owner->flags & 0x80u) == 0u
         && (owner->flags & 0x100u) == 0u
         && (model->modelFlags & 0x20u) == 0u;
+#endif
 }
 
 // Per-instance ID for shadow self-exclusion
@@ -902,6 +909,9 @@ OriginalSTree::OriginalSTree() {
 }
 
 OriginalSTree::~OriginalSTree() {
+#if defined(RC_PLATFORM_QUEST)
+    questcharacter::TreeDestroyed(this);
+#endif
     UnregisterLiveOriginalSTree(this);
 
     if (primGeom) {
@@ -1544,6 +1554,9 @@ Model::Model() {
 
 // PSX: __5Model (MODEL.CPP:697, 0x8006E6CC)
 Model::~Model() {
+#if defined(RC_PLATFORM_QUEST)
+    questcharacter::ModelDestroyed(this);
+#endif
     MARKFUNCTION(0x8006E6CC);
 
     DeleteAmbientLight();
@@ -1695,6 +1708,9 @@ SModel::~SModel() {
 // PC adaptation: sets world matrix from position/rotation/scale, then draws mesh
 void SModel::Show(u32 flags) {
     MARKFUNCTION(0x8006F68C);
+#if defined(RC_PLATFORM_QUEST)
+    if(questcharacter::Hide(this))return;
+#endif
 
     // PSX: clear visible/drawn bits
     modelFlags &= ~0x30;
@@ -1797,6 +1813,10 @@ void SModel::Show(u32 flags) {
         p3d::context->SetWorldMatrix(savedWorld);
         return;
     }
+#endif
+
+#if defined(RC_PLATFORM_QUEST)
+    questcharacter::Capture(this,world);
 #endif
 
     // PSX: calls drawable->Display(flags) through vtable

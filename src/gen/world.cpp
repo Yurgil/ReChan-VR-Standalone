@@ -1,3 +1,6 @@
+#if defined(RC_PLATFORM_QUEST)
+#include "pddi/quest/QuestXR.h"
+#endif
 #include "common.h"
 #include "ai/activezn.h"
 #include "ai/generator.h"
@@ -4548,6 +4551,14 @@ void World::computeBlockToPointDistances(const Block* block, const LVector* play
     // If ANY pair ANDs to 0 - visible (at least one edge straddles a frustum plane)
     // If ALL pairs are non-zero - fully culled
     // PSX pairs: (0,1)(0,2)(0,4)(1,3)(1,5)(2,3)(2,6)(3,7)(4,5)(4,6)(5,7)(6,7)(0,7)
+#if defined(RC_PLATFORM_QUEST)
+    Mat4 boundsWorld;
+    boundsWorld.SetTranslation(static_cast<float>(pos[0]), static_cast<float>(pos[1]), static_cast<float>(pos[2]));
+    // Include the small render seam offset so block bounds remain conservative.
+    const float low[] = {static_cast<float>(bbox[0])-64, static_cast<float>(bbox[1])-64, static_cast<float>(bbox[2])-64};
+    const float high[] = {static_cast<float>(bbox[3])+64, static_cast<float>(bbox[4])+64, static_cast<float>(bbox[5])+64};
+    if (!questxr::IsBoundsVisible(vm, boundsWorld, low, high)) {
+#else
     if ((clipCodes[0] & clipCodes[1]) != 0 &&
         (clipCodes[0] & clipCodes[2]) != 0 &&
         (clipCodes[0] & clipCodes[4]) != 0 &&
@@ -4561,6 +4572,7 @@ void World::computeBlockToPointDistances(const Block* block, const LVector* play
         (clipCodes[5] & clipCodes[7]) != 0 &&
         (clipCodes[6] & clipCodes[7]) != 0 &&
         (clipCodes[0] & clipCodes[7]) != 0) {
+#endif
         // All 13 pairs non-zero - block is fully outside the frustum
         *outDistSq = -1;
         return;

@@ -26,7 +26,11 @@ void RealTextureRegistry::Register(u16 tpage, u16 cba, const u8* rgba, int width
 
     pddiTexture* texture = p3d::device->NewTexture();
     texture->SetData(width, height, 32, 8, rgba);
+#if defined(RC_PLATFORM_QUEST)
+    texture->SetFilterMode(PDDI_FILTER_BILINEAR);
+#else
     texture->SetFilterMode(PDDI_FILTER_NONE);
+#endif
 
     const u32 key = MakeKey(tpage, cba);
     auto it = m_entries.find(key);

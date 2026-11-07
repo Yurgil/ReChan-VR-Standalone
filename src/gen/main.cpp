@@ -1,4 +1,4 @@
-﻿#include "common.h"
+#include "common.h"
 #include "p3d/context.h"
 #include "p3d/fileio.h"
 #include "p3d/input.h"
@@ -38,6 +38,11 @@
 #endif
 
 #include "extra/version.h"
+#include "extra/touchhud.h"
+#if defined(RC_PLATFORM_QUEST)
+#include "pddi/quest/QuestXR.h"
+#include "extra/shadowcsm.h"
+#endif
 
 #include <vector>
 #include <algorithm>
@@ -152,7 +157,7 @@ static bool EnsureDataDirectory() {
 }
 #endif
 
-int main(int argc, char** argv) {
+static int RechanMain(int argc, char** argv) {
 #if !defined(RC_PLATFORM_SWITCH)
     const bool dataDirFound = EnsureDataDirectory();
 #endif
@@ -260,6 +265,15 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+#if defined(RC_PLATFORM_QUEST)
+    if (argc >= 2 && std::strcmp(argv[1], "--quest-diagnostic") == 0) {
+        const int result = questxr::RunDiagnostic();
+        platform->DestroyContext(ctx);
+        tPlatform::Destroy();
+        Log::Get().Shutdown();
+        return result;
+    }
+#endif
     TrySetPlatformWindowIcon();
 
 #ifdef MOD_LOADER
@@ -353,7 +367,11 @@ int main(int argc, char** argv) {
         g_time->Tick(realDt);
 #if HIGH_FPS_PLAY_PRESENTATION
         const GameState curState = game.GetState();
+#if defined(RC_PLATFORM_QUEST)
+        if (curState != GameState::Play) {
+#else
         if (curState == GameState::EndLevelLoop) {
+#endif
             const s32 fixedLogicSteps = g_time->BeginPlayFixedStep();
             for (s32 i = 0; i < fixedLogicSteps; ++i) {
                 g_time->Step();
@@ -371,6 +389,14 @@ int main(int argc, char** argv) {
         rDoTaskList(&rFrameTaskList, static_cast<u32>(rFrameCount));
 
         p3d::display->PollEvents();
+
+#if defined(RC_PLATFORM_ANDROID) && !defined(RC_PLATFORM_QUEST)
+        // Feed the virtual gamepad BEFORE polling input so this frame's
+        // touch hits land in the same ServiceInput/ActionInput snapshot
+        // (they used to be posted at the end of the frame and only became
+        // visible one frame later).
+        touchhud::ProcessInput();
+#endif
 
         if (p3d::input) {
             p3d::input->ServiceInput();
@@ -429,8 +455,14 @@ int main(int argc, char** argv) {
         if (!AutoTest_Step(game.GetState())) {
             break;
         }
+#if defined(RC_PLATFORM_ANDROID)
+        // Publish gameplay context for the touch overlay (no-op elsewhere).
+        touchhud::PublishFrame();
+#endif
 
+#if !defined(RC_PLATFORM_QUEST)
         g_time->WaitForFrameEnd(frameStart);
+#endif
 
         static f32 titleAccumSec = 0.0f;
         titleAccumSec += g_time->deltaTime;
@@ -445,6 +477,11 @@ int main(int argc, char** argv) {
     LOG_ALWAYS("[main] Main loop ended: windowClosed=%d state=%d",
                p3d::display->ShouldClose() ? 1 : 0, static_cast<int>(game.GetState()));
 
+#if defined(RC_PLATFORM_QUEST)
+    // Shadow targets are process-static; release them while their GL context
+    // still exists so a subsequent activity cannot reuse stale GPU names.
+    ShadowCSM::Shutdown();
+#endif
     platform->DestroyContext(ctx);
     tPlatform::Destroy();
 
@@ -480,3 +517,14 @@ int main(int argc, char** argv) {
 
     return AutoTest_GetExitCode();
 }
+
+#if defined(RC_PLATFORM_ANDROID)
+// Called by the Android shell (android_main) once the native window is ready.
+int GameMain(int argc, char** argv) {
+    return RechanMain(argc, argv);
+}
+#else
+int main(int argc, char** argv) {
+    return RechanMain(argc, argv);
+}
+#endif

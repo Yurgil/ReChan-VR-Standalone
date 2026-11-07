@@ -1,7 +1,12 @@
 #pragma once
 // Game title
+#if defined(RC_PLATFORM_QUEST) && defined(RECHAN_QUEST_VERSION)
+#define JCS_TITLE "ReChan Quest"
+#define GAME_VERSION RECHAN_QUEST_VERSION
+#else
 #define JCS_TITLE "ReChan"
 #define GAME_VERSION "v1.0.2"
+#endif
 #define UPDATE_REPO_OWNER "SilverwireGames"
 #define UPDATE_REPO_NAME "ReChan"
 

@@ -54,6 +54,9 @@ enum MenuPage : s32 {
     MenuPage_Update,
     MenuPage_Changelog,
     MenuPage_AssetMissing,
+#if defined(RC_PLATFORM_QUEST)
+    MenuPage_QuestRoom,
+#endif
     MenuPage_Count,
 };
 
@@ -88,6 +91,11 @@ enum EntryBinding : u8 {
     EntryBinding_PlayerConfig,
     EntryBinding_ControllerPromptStyle,
     EntryBinding_Language,
+#if defined(RC_PLATFORM_QUEST)
+    EntryBinding_QuestMR,
+    EntryBinding_QuestMRSize,
+    EntryBinding_QuestJackie,
+#endif
     EntryBinding_DisplayResolution,
     EntryBinding_DisplayScreenMode,
     EntryBinding_DisplayVsync,
@@ -134,6 +142,7 @@ enum EntryEvent : u8 {
     EntryEvent_ScanForAssets,
     EntryEvent_ExtractAssets,
     EntryEvent_QuitFromAssetCheck,
+    EntryEvent_QuestRoomScan,
 };
 
 #define MAX_ENTRIES_PER_MENU (12)
@@ -404,7 +413,15 @@ public:
     bool IsPopupActive() const { return m_activePopup != PopupKind_None; }
     PopupKind GetActivePopup() const { return m_activePopup; }
     bool IsActive() const { return m_active; }
+    bool IsMouseActive() const { return m_mouseInputActive; }
     MenuPage GetCurrentPage() const { return m_currPage; }
+
+    // True when the current page cannot be fully operated by direct touch
+    // (ProcessTouchTaps + steppers): scrolling lists, table layouts and the
+    // key-binding grid still need virtual D-pad navigation. Generic list
+    // pages (title/options/settings/cheats/confirms/location) are fully
+    // tappable, so the on-screen gamepad there is redundant clutter.
+    bool NeedsVirtualPadNavigation() const;
 
     void RenderAutosaveSpinner(s32 centerX, s32 centerY, f32 alpha01 = 1.0f) const;
 
@@ -445,6 +462,41 @@ private:
     void GoBack();
     void Adjust(s32 dir);
     void UpdateMouseCursorVisibility(); // mouse-move/click reactivation + keyboard/gamepad hide, shared by every page including non-interactive popups
+
+    // Android: process queued touchscreen taps against the current page's
+    // entries (direct activation, no mouse emulation).
+    void ProcessTouchTaps();
+
+    // Android touch steppers: adjustable rows (List/Slider/Toggle) render their
+    // value flanked by "<" and ">" arrows; tapping an arrow steps the value.
+    // The arrow glyph positions are measured during RenderCurrentPage() and
+    // stored as screen-pixel tap zones (m_touchStepperZones) that
+    // ProcessTouchTaps() consumes on the following frames.
+    struct TouchStepperZone {
+        s32 entryIndex;
+        f32 leftMidX;  // screen px, center of the '<' glyph
+        f32 rightMidX; // screen px, center of the '>' glyph
+        f32 grabHalfW; // generous tap radius around each arrow center
+    };
+    void ClearTouchStepperZones() { m_touchStepperZoneCount = 0; }
+    void RecordTouchStepperZone(s32 entryIndex, f32 leftMidX, f32 rightMidX, f32 grabHalfW);
+    const TouchStepperZone* FindTouchStepperZone(s32 entryIndex) const;
+    // Discard staged Resolution/ScreenMode/MSAA values (same cleanup MoveCursor
+    // performs when the cursor leaves a staged row).
+    void ClearPendingDisplayStaging();
+    // Prints a right-aligned value text; on Android it is flanked by "< >"
+    // stepper arrows and the arrow tap zones are recorded.
+    void PrintValueWithTouchSteppers(s32 entryIndex, const char* valueText,
+                                     f32 valueScreenX, f32 rowScreenY,
+                                     bool selected,
+                                     const xcColour1555& selectedColor,
+                                     const xcColour1555& normalColor);
+    // Draws a slider's circle meter; on Android it is flanked by "< >"
+    // stepper arrows and the arrow tap zones are recorded.
+    void DrawSliderTouchSteppers(s32 entryIndex, f32 rightX, f32 textY, f32 value,
+                                 bool selected,
+                                 const xcColour1555& selectedColor,
+                                 const xcColour1555& normalColor);
     s32 GetBoundValue(const Entry& e) const;
     void ApplyValue(const Entry& e, s32 v);
     void PlayValueChangeFeedback(const Entry& entry);
@@ -601,6 +653,10 @@ private:
     s32 m_cursor = 0;
     s32 m_result = 1;
     ColorPulse m_pulse{ xcColour1555(132, 0, 0), xcColour1555(224, 146, 0), 0.5f };
+    // Android touch: "< value >" arrow tap zones for the current page's
+    // adjustable rows (screen px, refreshed every RenderCurrentPage()).
+    TouchStepperZone m_touchStepperZones[MAX_ENTRIES_PER_MENU] = {};
+    s32 m_touchStepperZoneCount = 0;
     // Resolution selection is staged while focused and committed on confirm.
     bool m_pendingResolutionActive = false;
     s32 m_pendingResolutionIndex = 0;
@@ -608,10 +664,6 @@ private:
     // Screen mode selection is staged while focused and committed on confirm.
     bool m_pendingScreenModeActive = false;
     s32 m_pendingScreenMode = 0;
-
-    // MSAA selection is staged while focused and committed on confirm.
-    bool m_pendingMsaaActive = false;
-    s32 m_pendingMsaaIndex = 0;
 
     // Input mode tracking: when false, mouse hover is ignored until mouse moves/clicks.
     bool m_mouseInputActive = true;

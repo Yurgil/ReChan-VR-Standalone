@@ -60,8 +60,10 @@
 // resolution/palette cap for ModLoader texture overrides.
 #define REAL_TEXTURE_RENDERING 1
 
-// Downloads a release archive and self-restarts the process
-#if defined(RC_PLATFORM_NULL)
+// Downloads a release archive and self-restarts the process.
+// Disabled on platforms with no process-spawn/curl model (Switch headless-style,
+// Android app sandbox).
+#if defined(RC_PLATFORM_NULL) || defined(RC_PLATFORM_ANDROID)
 #define AUTO_UPDATER 0
 #else
 #define AUTO_UPDATER (CUSTOM_MENU && 1)

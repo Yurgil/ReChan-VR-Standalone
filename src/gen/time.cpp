@@ -46,6 +46,9 @@ s32 Time::BeginPlayFixedStep() {
     static constexpr s32 kMaxLogicStepsPerFrame = 4;
     static constexpr f32 kMaxAccumulatedTime = kPlayLogicDt * (f32)kMaxLogicStepsPerFrame;
 
+#if !defined(RC_PLATFORM_QUEST)
+    // Desktop's capped 30-Hz path advances once per frame. OpenXR owns frame
+    // pacing independently of this saved setting, so Quest must always use elapsed time.
     if (targetFPS == 30) {
         playLogicAccumulator = 0.0f;
         playPresentationAlpha = 1.0f;
@@ -53,6 +56,7 @@ s32 Time::BeginPlayFixedStep() {
         return playLogicStepCount;
     }
 
+#endif
     playLogicAccumulator += deltaTime;
     if (playLogicAccumulator > kMaxAccumulatedTime) {
         playLogicAccumulator = kMaxAccumulatedTime;

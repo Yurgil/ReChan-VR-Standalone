@@ -151,6 +151,22 @@ public:
 
         const bool useGamepad = g_actionInput && g_actionInput->IsGamepadActive();
         if (useGamepad) {
+#if defined(RC_PLATFORM_QUEST)
+            const char* touchLabel = nullptr;
+            switch (action) {
+                case ACTION_JUMP: touchLabel = "R trigger"; break;
+                case ACTION_GRAB: touchLabel = "L trigger"; break;
+                case ACTION_DIVE_ROLL: touchLabel = "R grip"; break;
+                case ACTION_STRAFE: touchLabel = "L grip"; break;
+                case ACTION_STATUS_DISPLAY: touchLabel = "R stick"; break;
+                default: break;
+            }
+            if (touchLabel) {
+                CopyText(out.fallback, (s32)sizeof(out.fallback), touchLabel);
+                out.isGamepad = true;
+                return true;
+            }
+#endif
             const s32 button = g_actionInput ? g_actionInput->GetGamepadButtonBinding(action) : GpBtn::NONE;
             CopyText(out.fallback, (s32)sizeof(out.fallback), GamepadButtonToLabel(button));
 

@@ -1,12 +1,16 @@
 #include "pddi/gles/glesrender.h"
 
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
 #include <GLES3/gl32.h>
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#if defined(RC_PLATFORM_QUEST)
+#include "pddi/quest/QuestXR.h"
+#endif
 
 #if defined(RC_PLATFORM_SWITCH)
 static void LogGles(const char* fmt, ...) {
@@ -18,6 +22,18 @@ static void LogGles(const char* fmt, ...) {
     va_end(args);
     std::fputc('\n', f);
     std::fclose(f);
+}
+#elif defined(RC_PLATFORM_ANDROID)
+#include <android/log.h>
+#include <android/native_window.h>
+#include <unistd.h>
+static void LogGles(const char* fmt, ...) {
+    char line[512];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(line, sizeof(line), fmt, args);
+    va_end(args);
+    __android_log_print(ANDROID_LOG_INFO, "rechan-gles", "%s", line);
 }
 #else
 static void LogGles(const char*, ...) {}
@@ -36,8 +52,19 @@ static void LogGles(const char*, ...) {}
 // rejected; do not reintroduce.
 static const char* kGLESPreamble =
     "#version 300 es\n"
+#if defined(RC_PLATFORM_QUEST)
+    "#extension GL_OVR_multiview2 : require\n"
+#endif
     "precision highp float;\n"
     "precision highp int;\n"
+#if defined(RC_PLATFORM_QUEST)
+    "precision highp sampler2DShadow;\n"
+    "precision highp usampler2D;\n"
+    "#define HAS_SHADOW_CASCADES 1\n"
+    "#define HAS_INT_ID_TARGET 1\n"
+    "#define HAS_REAL_TEXTURE 1\n"
+    "#define RECHAN_BILINEAR_VRAM 1\n"
+#endif
     "#define NOPERSP\n"
     "#define HIGHP highp\n"
     "#define VRAM_FLOAT 1\n";
@@ -49,6 +76,10 @@ static u32 CompileGLESShader(u32 type, const char* src, const char* programName,
         return 0;
     }
 
+#if defined(RC_PLATFORM_QUEST)
+    const std::string questSource = type == GL_VERTEX_SHADER ? questxr::VertexShader(src, programName) : questxr::FragmentShader(src, programName);
+    src = questSource.c_str();
+#endif
     const char* sources[2] = { kGLESPreamble, src };
     u32 shader = glCreateShader(type);
     glShaderSource(shader, 2, sources, nullptr);
@@ -252,7 +283,11 @@ bool glesTexture::SetIdTargetStorage(int w, int h) {
     if (handle) glDeleteTextures(1, &handle);
     glGenTextures(1, &handle);
     glBindTexture(GL_TEXTURE_2D, handle);
+#if defined(RC_PLATFORM_QUEST)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, w, h, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, nullptr);
+#else
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+#endif
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -599,6 +634,12 @@ glesDisplay::~glesDisplay() {
     if (!dpy) {
         return;
     }
+#if defined(RC_PLATFORM_QUEST)
+    questxr::Shutdown();
+#endif
+    // Free the MSAA framebuffer while the context may still be current;
+    // with no current context these calls are harmless no-ops.
+    DestroyMsaaFramebuffer();
     eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     if (eglContext_) {
         eglDestroyContext(dpy, static_cast<EGLContext>(eglContext_));
@@ -608,7 +649,11 @@ glesDisplay::~glesDisplay() {
         eglDestroySurface(dpy, static_cast<EGLSurface>(eglSurface_));
         eglSurface_ = nullptr;
     }
+#if !defined(RC_PLATFORM_ANDROID)
+    // On Android the EGLDisplay is shared with the whole process (NativeActivity
+    // may reuse it); never terminate it from here.
     eglTerminate(dpy);
+#endif
     eglDisplay_ = nullptr;
 }
 
@@ -617,6 +662,21 @@ bool glesDisplay::InitDisplay(const pddiDisplayInit& init) {
     height = init.ySize;
 
     s_glesInitError[0] = '\0';
+
+#if defined(RC_PLATFORM_SWITCH)
+    void* nativeWindow = nwindowGetDefault();
+#elif defined(RC_PLATFORM_QUEST)
+    // XR renders to swapchains using a persistent pbuffer. Never dereference a
+    // borrowed ANativeWindow: TERM_WINDOW can release it on the shell thread.
+#else
+    // Android: wait for the NativeActivity shell to publish a window.
+    void* nativeWindow = androidbridge::PeekCurrentWindow();
+    if (!nativeWindow) {
+        std::snprintf(s_glesInitError, sizeof(s_glesInitError),
+                      "no ANativeWindow published yet");
+        return false;
+    }
+#endif
 
     EGLDisplay dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (!dpy) {
@@ -632,6 +692,9 @@ bool glesDisplay::InitDisplay(const pddiDisplayInit& init) {
 
     static const EGLint kConfigAttribs[] = {
         EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+#if defined(RC_PLATFORM_QUEST)
+        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+#endif
         EGL_RED_SIZE,     8,
         EGL_GREEN_SIZE,   8,
         EGL_BLUE_SIZE,    8,
@@ -646,16 +709,30 @@ bool glesDisplay::InitDisplay(const pddiDisplayInit& init) {
     if (numConfigs == 0) {
         std::snprintf(s_glesInitError, sizeof(s_glesInitError),
                       "eglChooseConfig: 0 configs (0x%04x)", eglGetError());
+#if !defined(RC_PLATFORM_ANDROID)
         eglTerminate(dpy);
+#endif
         return false;
     }
+#if defined(RC_PLATFORM_ANDROID)
+    config_ = config;
+#endif
 
 
-    EGLSurface surface = eglCreateWindowSurface(dpy, config, nwindowGetDefault(), nullptr);
+#if defined(RC_PLATFORM_QUEST)
+    const EGLint pbufferAttribs[] = { EGL_WIDTH, 16, EGL_HEIGHT, 16, EGL_NONE };
+    EGLSurface surface = eglCreatePbufferSurface(dpy, config, pbufferAttribs);
+#else
+    EGLSurface surface = eglCreateWindowSurface(dpy, config,
+                                                static_cast<EGLNativeWindowType>(nativeWindow),
+                                                nullptr);
+#endif
     if (!surface) {
         std::snprintf(s_glesInitError, sizeof(s_glesInitError),
                       "eglCreateWindowSurface failed (0x%04x)", eglGetError());
+#if !defined(RC_PLATFORM_ANDROID)
         eglTerminate(dpy);
+#endif
         return false;
     }
 
@@ -668,7 +745,9 @@ bool glesDisplay::InitDisplay(const pddiDisplayInit& init) {
         std::snprintf(s_glesInitError, sizeof(s_glesInitError),
                       "eglCreateContext failed (0x%04x)", eglGetError());
         eglDestroySurface(dpy, surface);
+#if !defined(RC_PLATFORM_ANDROID)
         eglTerminate(dpy);
+#endif
         return false;
     }
 
@@ -677,10 +756,28 @@ bool glesDisplay::InitDisplay(const pddiDisplayInit& init) {
                       "eglMakeCurrent failed (0x%04x)", eglGetError());
         eglDestroyContext(dpy, context);
         eglDestroySurface(dpy, surface);
+#if !defined(RC_PLATFORM_ANDROID)
         eglTerminate(dpy);
+#endif
         return false;
     }
     eglSwapInterval(dpy, init.vsync ? 1 : 0);
+#if defined(RC_PLATFORM_ANDROID)
+    vsyncEnabled_ = init.vsync;
+#endif
+
+#if defined(RC_PLATFORM_ANDROID) && !defined(RC_PLATFORM_QUEST)
+    // Render at the real surface size; HOR+ aspect handling adapts downstream.
+    width = ANativeWindow_getWidth(static_cast<ANativeWindow*>(nativeWindow));
+    height = ANativeWindow_getHeight(static_cast<ANativeWindow*>(nativeWindow));
+
+    // Record which window/generation this surface belongs to so PollEvents can
+    // detect stale surfaces after pause/resume.
+    surfaceGen_ = androidbridge::WindowGeneration();
+    eglSurfaceWindow_ = nativeWindow;
+#endif
+
+    LogGles("glesDisplay: init %dx%d vsync=%d", width, height, init.vsync ? 1 : 0);
 
     // One-shot capability dump. The depth/stencil sizes are what the driver
     // actually handed back, not what was asked for: a 16-bit depth buffer
@@ -704,10 +801,230 @@ bool glesDisplay::InitDisplay(const pddiDisplayInit& init) {
     eglDisplay_ = dpy;
     eglSurface_ = surface;
     eglContext_ = context;
+
+#if defined(RC_PLATFORM_QUEST)
+    if (!questxr::Initialize(dpy, config, context)) {
+        std::snprintf(s_glesInitError, sizeof(s_glesInitError), "%s", questxr::Error());
+        return false;
+    }
+    // Logical presentation canvas. The physical eye viewport comes from OpenXR separately.
+    width = 1280;
+    height = 960;
+#endif
+
+    // Honour a startup sample count (tContextInitData::msaa). The offscreen
+    // MSAA framebuffer is created lazily on the first BeginMsaaFrame.
+    if (init.msaa > 0) {
+        SetMSAA(init.msaa);
+    }
     return true;
 }
 
+// ---- glesDisplay MSAA -------------------------------------------------
+// The window surface's EGL config is fixed once the context exists (changing
+// it would require destroying the context and every GL object with it), so
+// anti-aliasing is done through an offscreen multisampled framebuffer: each
+// frame is rendered into it and resolved onto the window framebuffer with a
+// blit right before the swap. The sample count can therefore change at
+// runtime, instantly, from the settings menu.
+
+static int ClampGlesMsaaSamples(int samples) {
+    if (samples <= 0) {
+        return 0;
+    }
+
+    static const int kAllowed[] = { 2, 4, 8, 16 };
+    int closest = kAllowed[0];
+    int closestDist = (samples > closest) ? (samples - closest) : (closest - samples);
+    for (u32 i = 1; i < (u32)(sizeof(kAllowed) / sizeof(kAllowed[0])); i++) {
+        const int candidate = kAllowed[i];
+        const int dist = (samples > candidate) ? (samples - candidate) : (candidate - samples);
+        if (dist < closestDist) {
+            closest = candidate;
+            closestDist = dist;
+        }
+    }
+
+    GLint maxSamples = 0;
+    glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
+    if (maxSamples > 0 && closest > maxSamples) {
+        int fallback = 0;
+        for (u32 i = 0; i < (u32)(sizeof(kAllowed) / sizeof(kAllowed[0])); i++) {
+            if (kAllowed[i] <= maxSamples) {
+                fallback = kAllowed[i];
+            }
+        }
+        closest = fallback;
+    }
+
+    return closest;
+}
+
+void glesDisplay::DestroyMsaaFramebuffer() {
+    msaaFrameActive = false;
+    msaaAppliedSamples = 0;
+    msaaWidth = 0;
+    msaaHeight = 0;
+    if (msaaColorRbo) {
+        glDeleteRenderbuffers(1, &msaaColorRbo);
+        msaaColorRbo = 0;
+    }
+    if (msaaDepthRbo) {
+        glDeleteRenderbuffers(1, &msaaDepthRbo);
+        msaaDepthRbo = 0;
+    }
+    if (msaaFramebuffer) {
+        glDeleteFramebuffers(1, &msaaFramebuffer);
+        msaaFramebuffer = 0;
+    }
+}
+
+bool glesDisplay::EnsureMsaaFramebuffer(int w, int h) {
+    if (msaaFramebuffer && msaaAppliedSamples > 0 &&
+        msaaWidth == w && msaaHeight == h) {
+        return true;
+    }
+
+    GLint prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+
+    DestroyMsaaFramebuffer();
+    int samples = ClampGlesMsaaSamples(msaaRequestedSamples);
+    if (w <= 0 || h <= 0 || samples <= 0) {
+        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+        return false;
+    }
+
+    // Try the requested count, halving on failure until 2x; give up (0) if
+    // multisampled renderbuffers are not supported at all.
+    while (samples >= 2) {
+        while (glGetError() != GL_NO_ERROR) {} // drain stale errors before probing
+
+        GLuint fbo = 0, color = 0, depth = 0;
+        glGenFramebuffers(1, &fbo);
+        glGenRenderbuffers(1, &color);
+        glGenRenderbuffers(1, &depth);
+
+        glBindRenderbuffer(GL_RENDERBUFFER, color);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, w, h);
+        glBindRenderbuffer(GL_RENDERBUFFER, depth);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_DEPTH24_STENCIL8, w, h);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                  GL_RENDERBUFFER, color);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                  GL_RENDERBUFFER, depth);
+
+        const bool complete =
+            glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE &&
+            glGetError() == GL_NO_ERROR;
+
+        if (complete) {
+            msaaFramebuffer = fbo;
+            msaaColorRbo = color;
+            msaaDepthRbo = depth;
+            msaaWidth = w;
+            msaaHeight = h;
+            msaaAppliedSamples = samples;
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+            LogGles("glesDisplay: MSAA %dx enabled (framebuffer %dx%d)", samples, w, h);
+            return true;
+        }
+
+        glDeleteFramebuffers(1, &fbo);
+        glDeleteRenderbuffers(1, &color);
+        glDeleteRenderbuffers(1, &depth);
+        samples /= 2;
+    }
+
+    while (glGetError() != GL_NO_ERROR) {}
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+    LogGles("glesDisplay: MSAA unavailable (requested %d), rendering without AA",
+            msaaRequestedSamples);
+    // Hard failure: drop the request so BeginMsaaFrame does not retry the
+    // allocation every frame; a new SetMSAA re-arms it. GetMSAA() reports 0
+    // so callers see that AA is actually off.
+    msaaRequestedSamples = 0;
+    return false;
+}
+
+void glesDisplay::SetMSAA(int samples) {
+#if defined(RC_PLATFORM_QUEST)
+    // XR owns layered render targets; desktop MSAA resolve targets framebuffer zero.
+    msaaRequestedSamples = 0;
+    return;
+#endif
+    // Remember the request; without a current GL context (init not done, or
+    // the surface is parked while paused) the framebuffer is created lazily
+    // by the first BeginMsaaFrame after (re)activation.
+    msaaRequestedSamples = samples > 0 ? samples : 0;
+
+    if (!eglContext_ || !eglSurface_) {
+        return;
+    }
+
+    if (msaaRequestedSamples <= 0) {
+        DestroyMsaaFramebuffer();
+        return;
+    }
+
+    EnsureMsaaFramebuffer(width, height);
+}
+
+bool glesDisplay::BeginMsaaFrame(int viewportW, int viewportH) {
+    if (msaaRequestedSamples <= 0) {
+        return false;
+    }
+
+    if (!msaaFramebuffer || msaaAppliedSamples <= 0 ||
+        msaaWidth != viewportW || msaaHeight != viewportH) {
+        if (!EnsureMsaaFramebuffer(viewportW, viewportH)) {
+            return false;
+        }
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, msaaFramebuffer);
+    glViewport(0, 0, msaaWidth, msaaHeight);
+    glScissor(0, 0, msaaWidth, msaaHeight);
+    glEnable(GL_SCISSOR_TEST);
+    msaaFrameActive = true;
+    return true;
+}
+
+void glesDisplay::ResolveMsaaFrame() {
+    if (!msaaFrameActive || !msaaFramebuffer) {
+        return;
+    }
+    msaaFrameActive = false;
+
+    GLboolean prevColorMask[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
+    glGetBooleanv(GL_COLOR_WRITEMASK, prevColorMask);
+    const GLboolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, msaaFramebuffer);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    // The blit is the multisample resolve; scissor and colour-mask state
+    // would clip it, so neutralize both for the duration of the copy.
+    glDisable(GL_SCISSOR_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glBlitFramebuffer(0, 0, msaaWidth, msaaHeight,
+                      0, 0, msaaWidth, msaaHeight,
+                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+    glColorMask(prevColorMask[0], prevColorMask[1], prevColorMask[2], prevColorMask[3]);
+    if (prevScissor) {
+        glEnable(GL_SCISSOR_TEST);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 void glesDisplay::SwapBuffers() {
+#if defined(RC_PLATFORM_QUEST)
+    questxr::EndFrame();
+    return;
+#endif
+    if (!eglDisplay_ || !eglSurface_) return;
     eglSwapBuffers(static_cast<EGLDisplay>(eglDisplay_), static_cast<EGLSurface>(eglSurface_));
 }
 
@@ -716,9 +1033,74 @@ void glesDisplay::SetVSync(bool enabled) {
     eglSwapInterval(static_cast<EGLDisplay>(eglDisplay_), enabled ? 1 : 0);
 }
 
+#if defined(RC_PLATFORM_QUEST)
+void glesDisplay::PollEvents() {
+    questxr::PollEvents();
+    shouldClose = questxr::ShouldClose();
+}
+#elif defined(RC_PLATFORM_SWITCH)
 void glesDisplay::PollEvents() {
     shouldClose = !appletMainLoop();
 }
+#else
+// Android: drive surface lifetime transitions here so all EGL calls stay on
+// the game thread. While the app is paused (no surface) this parks the game
+// loop until the shell publishes a new window or requests exit. Surfaces are
+// tagged with the window generation they were created from, so a window that
+// changed behind our back is always torn down and rebuilt.
+void glesDisplay::PollEvents() {
+    if (androidbridge::ExitRequested()) {
+        shouldClose = true;
+        return;
+    }
+
+    if (eglSurface_ && androidbridge::WindowGeneration() != surfaceGen_) {
+        // The window was replaced or removed since this surface was made.
+        EGLDisplay dpy = static_cast<EGLDisplay>(eglDisplay_);
+        eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        eglDestroySurface(dpy, static_cast<EGLSurface>(eglSurface_));
+        eglSurface_ = nullptr;
+        eglSurfaceWindow_ = nullptr;
+        LogGles("glesDisplay: stale surface released (gen %llu)", (unsigned long long)surfaceGen_);
+    }
+
+    if (!eglSurface_) {
+        // Parked (paused): wait for the shell to publish a window.
+        while (!androidbridge::ExitRequested()) {
+            void* pending = androidbridge::TakePendingWindow();
+            if (!pending) {
+                usleep(16000); // ~60Hz idle while backgrounded
+                continue;
+            }
+
+            const unsigned long long genAtTake = androidbridge::WindowGeneration();
+            EGLDisplay dpy = static_cast<EGLDisplay>(eglDisplay_);
+            EGLSurface surface = eglCreateWindowSurface(
+                dpy, config_, static_cast<EGLNativeWindowType>(pending), nullptr);
+            if (surface &&
+                eglMakeCurrent(dpy, surface, surface, static_cast<EGLContext>(eglContext_))) {
+                eglSwapInterval(dpy, vsyncEnabled_ ? 1 : 0);
+                eglSurface_ = surface;
+                eglSurfaceWindow_ = pending;
+                surfaceGen_ = genAtTake;
+                width = ANativeWindow_getWidth(static_cast<ANativeWindow*>(pending));
+                height = ANativeWindow_getHeight(static_cast<ANativeWindow*>(pending));
+                LogGles("glesDisplay: surface resumed %dx%d (gen %llu)",
+                        width, height, genAtTake);
+            }
+            else {
+                LogGles("glesDisplay: resume failed (0x%04x)", eglGetError());
+                // Republish so the next PollEvents retries instead of parking
+                // forever with the window already consumed.
+                androidbridge::SetNativeWindow(pending);
+            }
+            break;
+        }
+    }
+
+    shouldClose = androidbridge::ExitRequested();
+}
+#endif
 
 bool glesDisplay::ShouldClose() {
     return shouldClose;
@@ -735,9 +1117,27 @@ glesContext::glesContext(glesDisplay* disp) : display(disp) {
     LogGles("glesContext: constructing (#%d this run)", totalContexts);
     GetDefaultWhiteTexture();
     s_defaultWhiteTextureUsers++;
-    // No shadowCompareSampler (unlike desktop): the GLES preamble leaves
-    // HAS_SHADOW_CASCADES undefined, so the mesh shader compiles without any
-    // sampler2DShadow use, which the recompiler rejects.
+#if defined(RC_PLATFORM_QUEST)
+    glGenSamplers(1, &shadowCompareSampler);
+    glSamplerParameteri(shadowCompareSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glSamplerParameteri(shadowCompareSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glSamplerParameteri(shadowCompareSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glSamplerParameteri(shadowCompareSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glSamplerParameteri(shadowCompareSampler, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glSamplerParameteri(shadowCompareSampler, GL_TEXTURE_COMPARE_FUNC, GL_GEQUAL);
+    const GLuint zero = 0;
+    glGenTextures(1, &shadowFallbackDepth);
+    glBindTexture(GL_TEXTURE_2D, shadowFallbackDepth);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 1, 1, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, &zero);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glGenTextures(1, &shadowFallbackId);
+    glBindTexture(GL_TEXTURE_2D, shadowFallbackId);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, 1, 1, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D, 0);
+#endif
     InitQuadMesh();
     LogGles("glesContext: InitQuadMesh done");
     InitGouraudMesh();
@@ -762,6 +1162,9 @@ glesContext::~glesContext() {
     if (batchProgram) glDeleteProgram(batchProgram);
     if (program3D) glDeleteProgram(program3D);
     if (shadowDepthProgram) glDeleteProgram(shadowDepthProgram);
+    if (shadowCompareSampler) glDeleteSamplers(1, &shadowCompareSampler);
+    if (shadowFallbackDepth) glDeleteTextures(1, &shadowFallbackDepth);
+    if (shadowFallbackId) glDeleteTextures(1, &shadowFallbackId);
 
     if (s_defaultWhiteTextureUsers > 0) {
         s_defaultWhiteTextureUsers--;
@@ -775,16 +1178,33 @@ void glesContext::BeginFrame() {
     int vx, vy, vw, vh;
     display->GetViewport(vx, vy, vw, vh);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(vx, vy, vw, vh);
-    glScissor(vx, vy, vw, vh);
+#if defined(RC_PLATFORM_QUEST)
+    questxr::BeginFrame();
+    glBindFramebuffer(GL_FRAMEBUFFER, questxr::Framebuffer());
+    glViewport(0, 0, vw, vh);
+    glScissor(0, 0, vw, vh);
     glEnable(GL_SCISSOR_TEST);
+#else
+    if (display->BeginMsaaFrame(vw, vh)) {
+        // Rendering into the offscreen multisampled framebuffer this frame;
+        // it already set the viewport/scissor to the window-sized target.
+    }
+    else {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(vx, vy, vw, vh);
+        glScissor(vx, vy, vw, vh);
+        glEnable(GL_SCISSOR_TEST);
+    }
+#endif
     stateDirty = true;
     activeRenderTarget = nullptr;
 }
 
 void glesContext::EndFrame() {
     glDisable(GL_SCISSOR_TEST);
+    // Resolve the multisampled frame (if AA is on) onto the window
+    // framebuffer before the swap.
+    display->ResolveMsaaFrame();
     glFlush();
 }
 
@@ -945,6 +1365,13 @@ void glesContext::SetBlendMode(pddiBlendMode mode) {
 }
 
 void glesContext::SetScissor(int x, int y, int w, int h) {
+#if defined(RC_PLATFORM_QUEST)
+    if (!activeRenderTarget) {
+        questxr::SetScreenScissor(x, y, w, h);
+        glScissor(0, 0, questxr::Width(), questxr::Height());
+        return;
+    }
+#endif
     glScissor(x, y, w, h);
 }
 
@@ -996,8 +1423,13 @@ void glesContext::ClearShadowCasterIdTarget() {
         return;
     }
 
+#if defined(RC_PLATFORM_QUEST)
+    static const GLuint kZeroId[4] = {};
+    glClearBufferuiv(GL_COLOR, 0, kZeroId);
+#else
     static const GLfloat kZeroId[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
     glClearBufferfv(GL_COLOR, 0, kZeroId);
+#endif
 }
 
 void glesContext::DrawFilledCircle(pddiBaseShader* shader,
@@ -1062,7 +1494,15 @@ void glesContext::DrawFilledCircle(pddiBaseShader* shader,
     const GLsizeiptr sizeBytes = (GLsizeiptr)(out * sizeof(float));
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeBytes, verts);
 
+#if defined(RC_PLATFORM_QUEST)
+    {
+        GLint screenProgram = 0;
+        glGetIntegerv(GL_CURRENT_PROGRAM, &screenProgram);
+        questxr::DrawScreenArrays(GL_TRIANGLES, 0, segments * 3, static_cast<GLuint>(screenProgram));
+    }
+#else
     glDrawArrays(GL_TRIANGLES, 0, segments * 3);
+#endif
 
     shader->PostRender();
 }
@@ -1140,7 +1580,15 @@ void glesContext::DrawCircle(pddiBaseShader* shader,
     const GLsizeiptr sizeBytes = (GLsizeiptr)(out * sizeof(float));
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeBytes, verts);
 
+#if defined(RC_PLATFORM_QUEST)
+    {
+        GLint screenProgram = 0;
+        glGetIntegerv(GL_CURRENT_PROGRAM, &screenProgram);
+        questxr::DrawScreenArrays(GL_TRIANGLES, 0, segments * 6, static_cast<GLuint>(screenProgram));
+    }
+#else
     glDrawArrays(GL_TRIANGLES, 0, segments * 6);
+#endif
 
     shader->PostRender();
 }
@@ -1222,7 +1670,15 @@ void glesContext::DrawQuad(pddiBaseShader* shader,
     glBindVertexArray(quadVAO);
     glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
+#if defined(RC_PLATFORM_QUEST)
+    {
+        GLint screenProgram = 0;
+        glGetIntegerv(GL_CURRENT_PROGRAM, &screenProgram);
+        questxr::DrawScreenArrays(GL_TRIANGLES, 0, 6, static_cast<GLuint>(screenProgram));
+    }
+#else
     glDrawArrays(GL_TRIANGLES, 0, 6);
+#endif
 
     shader->PostRender();
 }
@@ -1260,7 +1716,15 @@ void glesContext::DrawQuadBatch(pddiTexture* tex, pddiBlendMode blend,
     }
     glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)neededBytes, verts);
 
+#if defined(RC_PLATFORM_QUEST)
+    {
+        GLint screenProgram = 0;
+        glGetIntegerv(GL_CURRENT_PROGRAM, &screenProgram);
+        questxr::DrawScreenArrays(GL_TRIANGLES, 0, vertCount, static_cast<GLuint>(screenProgram));
+    }
+#else
     glDrawArrays(GL_TRIANGLES, 0, vertCount);
+#endif
     glUseProgram(0);
 }
 
@@ -1285,7 +1749,15 @@ void glesContext::DrawGouraudQuad(float x0, float y0, float r0, float g0, float 
     glBindVertexArray(gouraudVAO);
     glBindBuffer(GL_ARRAY_BUFFER, gouraudVBO);
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
+#if defined(RC_PLATFORM_QUEST)
+    {
+        GLint screenProgram = 0;
+        glGetIntegerv(GL_CURRENT_PROGRAM, &screenProgram);
+        questxr::DrawScreenArrays(GL_TRIANGLES, 0, 6, static_cast<GLuint>(screenProgram));
+    }
+#else
     glDrawArrays(GL_TRIANGLES, 0, 6);
+#endif
 }
 
 void glesContext::Init3DShader() {
@@ -1298,7 +1770,11 @@ void glesContext::Init3DShader() {
         LogGles("Init3DShader: OK, program3D=%u", program3D);
         u3D.alphaScale = glGetUniformLocation(program3D, "uAlphaScale");
         u3D.useZeroTexelKey = glGetUniformLocation(program3D, "uUseZeroTexelKey");
+#if defined(RC_PLATFORM_QUEST)
+        u3D.mvp = glGetUniformLocation(program3D, "uQuestMVP[0]");
+#else
         u3D.mvp = glGetUniformLocation(program3D, "uMVP");
+#endif
         u3D.worldMatrix = glGetUniformLocation(program3D, "uWorldMatrix");
         u3D.viewMatrix = glGetUniformLocation(program3D, "uViewMatrix");
         u3D.cameraPos = glGetUniformLocation(program3D, "uCameraPos");
@@ -1477,6 +1953,11 @@ void glesContext::DrawPrimBuffer(pddiPrimBuffer* buffer, u32 indexOffset, u32 in
         }
         glUseProgram(shadowDepthProgram);
         Mat4 lightMvp = shadowCasterLightVP * worldMatrix;
+#if defined(RC_PLATFORM_QUEST)
+        // ShadowCSM matrices use zero-to-one Z; GLES rasterization uses minus-one-to-one.
+        for (int column=0; column<4; ++column)
+            lightMvp(2,column) = 2*lightMvp(2,column)-lightMvp(3,column);
+#endif
         glUniformMatrix4fv(uShadowDepth.lightMVP, 1, GL_FALSE, lightMvp.Data());
         glUniform1ui(uShadowDepth.casterInstanceId, shadowCasterInstanceId);
 
@@ -1541,8 +2022,12 @@ void glesContext::DrawPrimBuffer(pddiPrimBuffer* buffer, u32 indexOffset, u32 in
         prog3DCache.useZeroTexelKey = useZeroTexelKey;
     }
 
+#if defined(RC_PLATFORM_QUEST)
+    questxr::UploadMeshMatrices(u3D.mvp, viewMatrix, worldMatrix);
+#else
     Mat4 mvp = projection * (viewMatrix * worldMatrix);
     glUniformMatrix4fv(u3D.mvp, 1, GL_FALSE, mvp.Data());
+#endif
     glUniformMatrix4fv(u3D.worldMatrix, 1, GL_FALSE, worldMatrix.Data());
     if (frameConstUniformsDirty) {
         glUniformMatrix4fv(u3D.viewMatrix, 1, GL_FALSE, viewMatrix.Data());
@@ -1585,13 +2070,34 @@ void glesContext::DrawPrimBuffer(pddiPrimBuffer* buffer, u32 indexOffset, u32 in
             // No sampler-object override (unlike desktop): the texture's own NEAREST/
             // COMPARE_MODE=NONE state already matches what the manual-compare shader wants.
             static_cast<glesTexture*>(shadowDepthTextures[i])->Bind(2 + i);
+#if defined(RC_PLATFORM_QUEST)
+            glBindSampler(2 + i, shadowCompareSampler);
+#endif
             glUniform1i(u3D.shadowMap[i], 2 + i);
             if (shadowIdTextures[i]) {
                 static_cast<glesTexture*>(shadowIdTextures[i])->Bind(5 + i);
+#if defined(RC_PLATFORM_QUEST)
+                glBindSampler(5 + i, 0);
+#endif
                 glUniform1i(u3D.shadowIdMap[i], 5 + i);
             }
         }
     }
+
+#if defined(RC_PLATFORM_QUEST)
+    // All active sampler uniforms need unique compatible units, including unused cascades.
+    for (int i=0; i<kShadowCascadeCount; ++i) {
+        const bool active = i<shadowCascadeCount && shadowDepthTextures[i] && shadowIdTextures[i];
+        glActiveTexture(GL_TEXTURE0+2+i);
+        glBindTexture(GL_TEXTURE_2D, active ? static_cast<glesTexture*>(shadowDepthTextures[i])->GetGLHandle() : shadowFallbackDepth);
+        glBindSampler(2+i,shadowCompareSampler);
+        glUniform1i(u3D.shadowMap[i],2+i);
+        glActiveTexture(GL_TEXTURE0+5+i);
+        glBindTexture(GL_TEXTURE_2D, active ? static_cast<glesTexture*>(shadowIdTextures[i])->GetGLHandle() : shadowFallbackId);
+        glBindSampler(5+i,0);
+        glUniform1i(u3D.shadowIdMap[i],5+i);
+    }
+#endif
 
     const int texInfoOverride = texInfoOverrideEnabled ? 1 : 0;
     if (prog3DCache.texInfoOverrideEnabled != texInfoOverride) {
@@ -1668,8 +2174,10 @@ pddiDevice* pddiCreate() {
     return new glesDevice();
 }
 
-// glesGamepad — real libnx PadState-backed implementation. Single
-// player-1 standard pad; the menu is single-player only.
+// glesGamepad — platform-backed implementations. Single player-1 standard
+// pad; the menu is single-player only.
+
+#if defined(RC_PLATFORM_SWITCH)
 
 namespace {
 struct ButtonMapEntry {
@@ -1730,3 +2238,31 @@ float glesGamepad::GetAxis(int axis) const {
     }
     return axes[axis];
 }
+
+#else // RC_PLATFORM_ANDROID
+
+// Android: state arrives via androidbridge from the NativeActivity input pump.
+void glesGamepad::Poll() {
+    const androidbridge::PadSnapshot snap = androidbridge::LoadPadSnapshot();
+    connected = snap.connected;
+    heldButtons = snap.heldButtons;
+    for (int i = 0; i < GamepadAxis::COUNT; ++i) {
+        axes[i] = snap.axes[i];
+    }
+}
+
+bool glesGamepad::IsButtonDown(int button) const {
+    if (button < 0 || button >= GamepadButton::COUNT) {
+        return false;
+    }
+    return (heldButtons & (1u << button)) != 0;
+}
+
+float glesGamepad::GetAxis(int axis) const {
+    if (axis < 0 || axis >= GamepadAxis::COUNT) {
+        return 0.0f;
+    }
+    return axes[axis];
+}
+
+#endif

@@ -54,6 +54,8 @@ public:
 #if HIGH_FPS_PLAY_PRESENTATION
     void ResetPlayPresentationState();
     s32 BeginPlayFixedStep();
+    // Render a frozen scene without advancing its clock or interpolation.
+    void HoldPlayPresentation(){playLogicStepCount=0;}
     bool DidPlayLogicStepThisFrame() const { return playLogicStepCount > 0; }
     s32 GetLogicStepCount() const { return playLogicStepCount; }
     f32 GetPlayPresentationAlpha() const { return playPresentationAlpha; }

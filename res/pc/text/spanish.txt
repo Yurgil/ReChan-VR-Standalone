@@ -640,3 +640,60 @@ Mundo Espejo:
 
 [0xC131692D]
 Pulsa <ACT:OPEN_CLOSE_MENU> para abrir el menu principal.
+
+[FE_QMR]
+Realidad mixta
+
+[FE_QSZ]
+Tamano ventana MR
+
+[FE_QRI]
+Room interaction
+
+[FE_QJI]
+Interact with Jackie
+
+[FE_QRST]
+Room status
+
+[FE_QHELP]
+Activate in MR with both stick clicks.
+
+[FE_QRESCAN]
+Scan room again
+
+[FE_QOFF]
+Room: off
+
+[FE_QNA]
+Room: unsupported
+
+[FE_QWAIT]
+Room: waiting for interaction mode
+
+[FE_QPER]
+Room: awaiting permission
+
+[FE_QDEN]
+Room: permission denied
+
+[FE_QLOAD]
+Room: loading saved scan
+
+[FE_QSCAN]
+Room: system scan in progress
+
+[FE_QLOC]
+Room: locating surfaces
+
+[FE_QREADY]
+Room: ready
+
+[FE_QCANCEL]
+Room: scan cancelled
+
+[FE_QMISS]
+Room: no matching scan
+
+[FE_QERR]
+Room: unavailable, retry scan

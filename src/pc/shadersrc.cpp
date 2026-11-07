@@ -751,6 +751,27 @@ void main() {
         FragColor = vec4(ApplyShadowDebugTint(vColor * shadowFactor), uAlphaScale);
     }
     else {
+#ifdef RECHAN_BILINEAR_VRAM
+        // PSX UV integers address texel centres, rather than GL texture edges.
+        // Preserve exact authored texels at integers, avoiding a half-texel shift
+        // into neighbouring atlas colours (especially along skin/clothing edges).
+        vec2 baseUV = floor(vUV);
+        vec2 fraction = fract(vUV);
+        vec3 filtered = vec3(0.0);
+        float coverage = 0.0;
+        for (int y=0; y<2; ++y) {
+            for (int x=0; x<2; ++x) {
+                bool zero = false;
+                float word = VramTexel(tpageF, cbaF, baseUV + vec2(float(x),float(y)), zero);
+                bool keyed = uUseZeroTexelKey != 0 ? zero : VramIsMagenta(word);
+                float weight = (x==0 ? 1.0-fraction.x : fraction.x) * (y==0 ? 1.0-fraction.y : fraction.y);
+                if (!keyed) { filtered += VramColour(word)*weight; coverage += weight; }
+            }
+        }
+        if (coverage < 0.5) discard;
+        vec3 texel = filtered / coverage;
+        FragColor = vec4(ApplyShadowDebugTint(texel * shadowFactor), uAlphaScale) * vec4(vColor,1.0);
+#else
         bool zeroTexel = false;
         float clutWord = VramTexel(tpageF, cbaF, vUV, zeroTexel);
 
@@ -762,6 +783,7 @@ void main() {
         vec3 texel = VramColour(clutWord);
         FragColor = vec4(ApplyShadowDebugTint(texel * shadowFactor),
                          uAlphaScale) * vec4(vColor, 1.0);
+#endif
     }
 }
 )GLSL";

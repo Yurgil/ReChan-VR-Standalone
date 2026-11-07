@@ -1,3 +1,6 @@
+#if defined(RC_PLATFORM_QUEST)
+#include "pddi/quest/QuestXR.h"
+#endif
 #include "gen/common.h"
 #include "gen/display.h"
 #include "gen/camera.h"
@@ -309,9 +312,14 @@ void Display::BeginFrame() {
         {
             tanHalfX = tanHalfY * cameraAspect; // Hor+
         }
-        p3dCam->SetProjectionMatrix(
-            PerspectiveReversedZTangents(tanHalfX, tanHalfY,
-                p3dCam->GetNearPlane(), p3dCam->GetFarPlane()));
+        const Mat4 gameProjection = PerspectiveReversedZTangents(tanHalfX, tanHalfY,
+            p3dCam->GetNearPlane(), p3dCam->GetFarPlane());
+        p3dCam->SetProjectionMatrix(gameProjection);
+#if defined(RC_PLATFORM_QUEST)
+        Mat4 presentationProjection = gameProjection;
+        if (p3d::context->GetWorldMirror()) presentationProjection.m[0] = -presentationProjection.m[0];
+        questxr::SetGameProjection(presentationProjection);
+#endif
     }
 
     p3d::context->BeginFrame();

@@ -50,7 +50,11 @@ constexpr f32 kCascadeOverlapMax[kQualityTierCount] = { 2500.0f, 2500.0f, 2500.0
 constexpr f32 kCascadeOverlapFraction[kQualityTierCount] = { 0.18f, 0.18f, 0.18f, 0.18f };
 constexpr f32 kLevelDepthPadding[kQualityTierCount] = { 4096.0f, 4096.0f, 4096.0f, 4096.0f };
 constexpr f32 kMinLightDepthRange[kQualityTierCount] = { 16384.0f, 16384.0f, 16384.0f, 16384.0f };
+#if defined(RC_PLATFORM_QUEST)
+constexpr pddiRenderTargetFormat kCascadeDepthFormat = PDDI_RENDER_TARGET_DEPTH24;
+#else
 constexpr pddiRenderTargetFormat kCascadeDepthFormat = PDDI_RENDER_TARGET_DEPTH32F;
+#endif
 // Caster-side polygon offset (glPolygonOffset factor/units) pushes shadow
 // casters back in light space to suppress acne. Shrinks as resolution climbs
 // (finer texels need less push to avoid acne) to cut peter-panning; Low
@@ -418,6 +422,11 @@ void ShadowCSM::SetQuality(ShadowQuality quality) {
     // Cutting shadows here keeps the first working Switch 3D scene to the
     // core geometry+VRAM-texture path; re-enabling is a later, separate task.
     quality = SHADOW_QUALITY_OFF;
+#endif
+
+#if defined(RC_PLATFORM_QUEST)
+    // Two 1024 cascades fit mobile memory. Ignore inherited desktop OFF/8192 presets.
+    quality = SHADOW_QUALITY_LOW;
 #endif
 
     const ShadowQuality previousQuality = s_quality;

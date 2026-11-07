@@ -1,4 +1,5 @@
-// glesrender.h — OpenGL ES (Switch) implementation of the pddi interfaces
+// glesrender.h — OpenGL ES implementation of the pddi interfaces
+// (libnx/EGL on Switch, EGL/ANativeWindow on Android)
 #pragma once
 
 #include "pddi/pddi.h"
@@ -6,7 +7,14 @@
 #include "pddi/pddishad.h"
 #include "pddi/pddidev.h"
 #include "pddi/pddishadersrc.h"
+#if defined(RC_PLATFORM_QUEST)
+#include "pddi/quest/QuestXR.h"
+#endif
+#if defined(RC_PLATFORM_SWITCH)
 #include <switch.h>
+#elif defined(RC_PLATFORM_ANDROID)
+#include "pddi/gles/AndroidPlatform.h"
+#endif
 #include <array>
 #include <string>
 #include <unordered_map>
@@ -168,8 +176,24 @@ public:
     void PollEvents() override;
 
     bool IsKeyDown(int) override { return false; }
+
+#if defined(RC_PLATFORM_ANDROID)
+    // Touch-as-mouse: fed by the NativeActivity input pump via androidbridge.
+    bool IsMouseButtonDown(int button) override {
+        if (button != 0) return false;
+        float x, y;
+        return androidbridge::GetTouchMouse(&x, &y);
+    }
+    void GetMousePosition(double& x, double& y) override {
+        float fx, fy;
+        androidbridge::GetTouchMouse(&fx, &fy);
+        x = fx;
+        y = fy;
+    }
+#else
     bool IsMouseButtonDown(int) override { return false; }
     void GetMousePosition(double& x, double& y) override { x = 0.0; y = 0.0; }
+#endif
 
     void SetIcon(int, int, const unsigned char*) override {}
 
@@ -179,10 +203,25 @@ public:
     bool IsFullscreen() override { return false; }
     void SetBorderless(bool) override {}
     bool IsBorderless() override { return false; }
-    void SetResolution(int w, int h) override { width = w; height = h; }
+    void SetResolution(int w, int h) override {
+#if defined(RC_PLATFORM_QUEST)
+        // Desktop settings do not resize the runtime's eye swapchain or the 4:3 UI canvas.
+        width = 1280; height = 960;
+#else
+        width = w; height = h;
+#endif
+    }
     void SetVSync(bool enabled) override;
-    void SetMSAA(int) override {}
-    int  GetMSAA() override { return 0; }
+    void SetMSAA(int samples) override;
+    int  GetMSAA() override { return msaaAppliedSamples; }
+
+    // Runtime-switchable AA: the EGL config stays single-sample (changing it
+    // would mean destroying the GL context), so frames render into an
+    // offscreen multisampled framebuffer that is resolved onto the window
+    // framebuffer right before the swap. glesContext calls BeginMsaaFrame at
+    // BeginFrame and ResolveMsaaFrame at EndFrame.
+    bool BeginMsaaFrame(int viewportW, int viewportH);
+    void ResolveMsaaFrame();
     void SetWindowPos(int, int) override {}
 
     void SetTitle(const char*) override {}
@@ -195,12 +234,39 @@ public:
     void AddOverlayCallback(OverlayCallback) override {}
     void RenderOverlay() override {}
 
-    void GetViewport(int& x, int& y, int& w, int& h) { x = 0; y = 0; w = width; h = height; }
+    void GetViewport(int& x, int& y, int& w, int& h) {
+        x = y = 0;
+#if defined(RC_PLATFORM_QUEST)
+        w = questxr::Width(); h = questxr::Height();
+#else
+        w = width; h = height;
+#endif
+    }
 
 private:
     void* eglDisplay_ = nullptr; // EGLDisplay
     void* eglContext_ = nullptr; // EGLContext
     void* eglSurface_ = nullptr; // EGLSurface
+#if defined(RC_PLATFORM_ANDROID)
+    void* config_ = nullptr;          // EGLConfig (kept for surface recreation on resume)
+    bool vsyncEnabled_ = true;
+    void* eglSurfaceWindow_ = nullptr; // ANativeWindow the surface was created from
+    unsigned long long surfaceGen_ = 0; // androidbridge generation at creation
+#endif
+
+    // Offscreen multisampled framebuffer (runtime AA). All fields are only
+    // touched from the game thread, which owns the GL context.
+    void DestroyMsaaFramebuffer();
+    bool EnsureMsaaFramebuffer(int w, int h);
+    int msaaRequestedSamples = 0; // last requested sample count (0 = off)
+    int msaaAppliedSamples = 0;   // samples actually allocated (0 = off)
+    u32 msaaFramebuffer = 0;
+    u32 msaaColorRbo = 0;
+    u32 msaaDepthRbo = 0;
+    int msaaWidth = 0;
+    int msaaHeight = 0;
+    bool msaaFrameActive = false; // MSAA framebuffer bound for the current frame
+
     int width = 1280;
     int height = 720;
     bool shouldClose = false;
@@ -331,6 +397,8 @@ private:
     u32 quadVBO = 0;
     u32 program3D = 0;
     u32 shadowDepthProgram = 0;
+    u32 shadowCompareSampler = 0;
+    u32 shadowFallbackDepth = 0, shadowFallbackId = 0;
     bool shadowCasterPassActive = false;
     Mat4 shadowCasterLightVP;
     bool receiveShadowsEnabled = false;
@@ -438,8 +506,10 @@ public:
     pddiBaseShader* NewShader(const char* type) override;
 };
 
-// glesGamepad — real libnx PadState-backed implementation.
+// glesGamepad — platform-backed implementation (libnx PadState on Switch,
+// shared state fed from the NativeActivity input queue on Android).
 
+#if defined(RC_PLATFORM_SWITCH)
 class glesGamepad : public pddiGamepad {
 public:
     glesGamepad();
@@ -457,3 +527,21 @@ private:
     u64 heldButtons = 0;
     float axes[GamepadAxis::COUNT] = {};
 };
+#elif defined(RC_PLATFORM_ANDROID)
+class glesGamepad : public pddiGamepad {
+public:
+    glesGamepad() = default;
+
+    void Poll() override;
+    bool IsConnected() const override { return connected; }
+    bool IsButtonDown(int button) const override;
+    float GetAxis(int axis) const override;
+    bool SupportsVibration() const override { return false; }
+    bool SetVibration(float, float) override { return false; }
+
+private:
+    bool connected = false;
+    u32 heldButtons = 0;
+    float axes[GamepadAxis::COUNT] = {};
+};
+#endif

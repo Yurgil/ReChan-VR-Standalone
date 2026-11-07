@@ -28,7 +28,7 @@ static const char* kActionTokens[ACTION_COUNT] = {
 
 static constexpr s32 kDesktopBindingSlotCount = 2;
 
-#if MENU_BACK_USES_CIRCLE
+#if MENU_BACK_USES_CIRCLE || defined(RC_PLATFORM_QUEST)
 static constexpr s32 kDefaultMenuBackGamepadButton = GpBtn::B;
 #else
 static constexpr s32 kDefaultMenuBackGamepadButton = GpBtn::Y;
@@ -286,6 +286,23 @@ ActionInput::ActionInput() {
     bindings[ACTION_COUNTER] = { { KEY_C, 0 }, { MouseBtn::NONE, MouseBtn::NONE }, GpBtn::LB, GpBtn::NONE, GpAxis::NONE, 0 };
     bindings[ACTION_STATUS_DISPLAY] = { { KEY_TAB, 0 }, { MouseBtn::NONE, MouseBtn::NONE }, GpBtn::NONE, GpBtn::NONE, GpAxis::LTrigger, 0.5f };
 
+#if defined(RC_PLATFORM_QUEST)
+    // Native A/B remain confirm/back in menus; gameplay uses the requested Touch layout.
+    bindings[ACTION_PUNCH].gamepadButton = GpBtn::A;
+    bindings[ACTION_KICK].gamepadButton = GpBtn::B;
+    bindings[ACTION_JUMP].gamepadButton = GpBtn::NONE;
+    bindings[ACTION_JUMP].gamepadAxis = GpAxis::RTrigger;
+    bindings[ACTION_JUMP].axisThreshold = 0.05f; // normalized trigger travel
+    bindings[ACTION_GRAB].gamepadButton = GpBtn::NONE;
+    bindings[ACTION_GRAB].gamepadAxis = GpAxis::LTrigger;
+    bindings[ACTION_GRAB].axisThreshold = 0.05f;
+    bindings[ACTION_STRAFE].gamepadButton = GpBtn::LB;
+    bindings[ACTION_STRAFE].gamepadAxis = GpAxis::NONE;
+    bindings[ACTION_COUNTER].gamepadButton = GpBtn::Y;
+    bindings[ACTION_STATUS_DISPLAY].gamepadButton = GpBtn::RStick;
+    bindings[ACTION_STATUS_DISPLAY].gamepadAxis = GpAxis::NONE;
+#endif
+
     bindings[ACTION_MOVE_UP] = { { KEY_W, 0 }, { MouseBtn::NONE, MouseBtn::NONE }, GpBtn::NONE, GpBtn::DpadUp, GpAxis::LeftY, -0.3f };
     bindings[ACTION_MOVE_DOWN] = { { KEY_S, 0 }, { MouseBtn::NONE, MouseBtn::NONE }, GpBtn::NONE, GpBtn::DpadDown, GpAxis::LeftY, 0.3f };
     bindings[ACTION_MOVE_LEFT] = { { KEY_A, 0 }, { MouseBtn::NONE, MouseBtn::NONE }, GpBtn::NONE, GpBtn::DpadLeft, GpAxis::LeftX, -0.3f };
@@ -328,6 +345,16 @@ bool ActionInput::PollAction(Action action, PlatformInput* platform) const {
     }
 
     // Check gamepad axis
+#if defined(RC_PLATFORM_QUEST)
+    if (b.gamepadAxis == GpAxis::LTrigger || b.gamepadAxis == GpAxis::RTrigger) {
+        // OpenXR travel is 0..1; the bridge exposes -1..1 for PDDI. Compare
+        // normalized travel, otherwise a positive 0.1 threshold needs 55% squeeze.
+        const float travel = b.gamepadAxis == GpAxis::LTrigger
+            ? platform->GetLeftTrigger() : platform->GetRightTrigger();
+        const float threshold = states[action].down ? 0.02f : b.axisThreshold;
+        return travel >= threshold;
+    }
+#endif
     if (b.gamepadAxis != GpAxis::NONE) {
         float val = platform->GetGamepadAxis(b.gamepadAxis);
         if (b.axisThreshold > 0 && val >= b.axisThreshold) {
@@ -387,6 +414,18 @@ void ActionInput::Update(PlatformInput* platform) {
 #if defined(RC_PLATFORM_SWITCH)
     const bool hasKeyboard = false;
     const bool hasMouse = false;
+#elif defined(RC_PLATFORM_ANDROID)
+    // Android is a touch-first console. The platform's "mouse position" is
+    // the user's FINGER, fed through the touch-as-mouse bridge in
+    // AndroidInput.cpp, and a physical keyboard never exists (IsKeyDown
+    // is permanently false). Counting the finger as desktop input made
+    // this device switch fight the virtual gamepad every frame: dragging
+    // the on-screen joystick also moved the touch-mouse, which cleared
+    // gamepadActive — freezing the analog controls, flipping prompts to
+    // keyboard glyphs and scrambling buttons through the control-map
+    // remap. Touch is the gamepad here; there is no desktop to switch to.
+    const bool hasKeyboard = false;
+    const bool hasMouse = false;
 #else
     const bool hasKeyboard = platform->HasAnyKeyboardInput();
     const bool hasMouse = platform->HasAnyMouseInput();
@@ -404,12 +443,21 @@ void ActionInput::Update(PlatformInput* platform) {
         hadKeyboardInputThisFrame = hasKeyboard;
         hadMouseInputThisFrame = hasMouse;
         hadGamepadInputThisFrame = hasGp;
+#if defined(RC_PLATFORM_ANDROID)
+        // Touch-only device: the virtual gamepad IS the primary (and only)
+        // input device. Staying in gamepad mode keeps the pad analog ('s'),
+        // keeps the analog override below active, keeps prompts on gamepad
+        // glyphs and skips the PSX control-map button remap, which is what
+        // made some on-screen buttons appear dead before.
+        gamepadActive = true;
+#else
         if (hasGp) {
             gamepadActive = true;
         }
         if (hasDesktop) {
             gamepadActive = false;
         }
+#endif
     }
 
     // Update all action states.
@@ -677,6 +725,12 @@ void ActionInput::GetDesktopBindingLabel(Action action, s32 slot, char* outLabel
 
 u32 ActionInput::GetPadButtons(bool menuActionsEnabled) const {
     u32 buttons = 0;
+#if defined(RC_PLATFORM_QUEST)
+    // A/B have separate combat and menu roles; never emit both PSX commands in menus.
+    const bool gameActionsEnabled = !menuActionsEnabled;
+#else
+    const bool gameActionsEnabled = true;
+#endif
 
     if (IsHeld(ACTION_MOVE_UP) || (menuActionsEnabled && IsHeld(ACTION_MENU_UP))) {
         buttons |= 0x1000;
@@ -691,31 +745,31 @@ u32 ActionInput::GetPadButtons(bool menuActionsEnabled) const {
         buttons |= 0x8000;
     }
 
-    if (IsHeld(ACTION_STATUS_DISPLAY)) {
+    if (gameActionsEnabled && IsHeld(ACTION_STATUS_DISPLAY)) {
         buttons |= 0x0001;
     }
-    if (IsHeld(ACTION_STRAFE)) {
+    if (gameActionsEnabled && IsHeld(ACTION_STRAFE)) {
         buttons |= 0x0002;
     }
-    if (IsHeld(ACTION_DIVE_ROLL)) {
+    if (gameActionsEnabled && IsHeld(ACTION_DIVE_ROLL)) {
         buttons |= 0x0008;
     }
-    if (IsHeld(ACTION_COUNTER)) {
+    if (gameActionsEnabled && IsHeld(ACTION_COUNTER)) {
         buttons |= 0x0004;
     }
-    if (IsHeld(ACTION_KICK)) {
+    if (gameActionsEnabled && IsHeld(ACTION_KICK)) {
         buttons |= 0x0010;
     }
-    if (IsHeld(ACTION_GRAB)) {
+    if (gameActionsEnabled && IsHeld(ACTION_GRAB)) {
         buttons |= 0x0020;
     }
     if (menuActionsEnabled && IsHeld(ACTION_MENU_BACK)) {
         buttons |= PsxPad::MenuBack;
     }
-    if (IsHeld(ACTION_JUMP) || (menuActionsEnabled && IsHeld(ACTION_MENU_CONFIRM))) {
+    if ((gameActionsEnabled && IsHeld(ACTION_JUMP)) || (menuActionsEnabled && IsHeld(ACTION_MENU_CONFIRM))) {
         buttons |= 0x0040;
     }
-    if (IsHeld(ACTION_PUNCH)) {
+    if (gameActionsEnabled && IsHeld(ACTION_PUNCH)) {
         buttons |= 0x0080;
     }
     if (IsHeld(ACTION_OPEN_CLOSE_MENU)) {

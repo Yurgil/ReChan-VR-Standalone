@@ -1,3 +1,7 @@
+#if defined(RC_PLATFORM_QUEST)
+#include "pddi/quest/QuestXR.h"
+#include "extra/shadowcsm.h"
+#endif
 #include "gen/geometry.h"
 #include "gen/display.h"
 #include "gen/lights.h"
@@ -712,6 +716,15 @@ static pddiPrimBuffer* BuildPrimBufferFromPrimGeom(const tPrimGeom* geom,
     };
 
     auto evaluatePsxCull = [&](const Vert& v0, const Vert& v1, const Vert& v2, const Vert* v3) -> PsxCullResult {
+#if defined(RC_PLATFORM_QUEST)
+        if (ShadowCSM::IsCasterPrepass()) return PsxCullResult::Keep;
+        if (p3d::context) {
+            const float vertices[] = {v0.x,v0.y,v0.z, v1.x,v1.y,v1.z, v2.x,v2.y,v2.z,
+                v3 ? v3->x : 0, v3 ? v3->y : 0, v3 ? v3->z : 0};
+            return questxr::IsPolygonVisible(p3d::context->GetViewMatrix(),
+                p3d::context->GetWorldMatrix(), vertices, v3 ? 4 : 3) ? PsxCullResult::Keep : PsxCullResult::Clip;
+        }
+#endif
         if (!doPsxFaceCull) {
             return PsxCullResult::Keep;
         }

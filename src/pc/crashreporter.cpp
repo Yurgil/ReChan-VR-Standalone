@@ -256,6 +256,53 @@ void CrashReporter::ShowFatalMessage(const char* title, const char* message) {
     std::printf("%s: %s\n", title, message);
 }
 
+#elif defined(RC_PLATFORM_ANDROID)
+
+// Android: the system tombstone/logcat pipeline already captures native faults
+// with full backtraces, so we only add a lightweight text report next to the
+// game files plus a logcat breadcrumb for fatal C++ signals.
+#include <android/log.h>
+#include <cerrno>
+#include <sys/stat.h>
+
+static volatile sig_atomic_t s_handlingCrash = 0;
+static char s_reportPath[512] = "rechan-crash.txt";
+
+static void AndroidWriteReport(const char* reason) {
+    if (mkdir("minidumps", 0755) != 0 && errno != EEXIST) return;
+    char path[sizeof(s_reportPath)];
+    std::snprintf(path, sizeof(path), "minidumps/rechan-crash.txt");
+    FILE* f = std::fopen(path, "w");
+    if (f) {
+        std::fprintf(f,
+                     "ReChan crash report (Android)\n"
+                     "=============\n\nReason: %s\n\n"
+                     "See logcat for the full system tombstone/backtrace.\n",
+                     reason ? reason : "unknown");
+        std::fclose(f);
+        std::strncpy(s_reportPath, path, sizeof(s_reportPath) - 1);
+    }
+    __android_log_print(ANDROID_LOG_ERROR, "rechan", "CRASH: %s (report: %s)",
+                        reason ? reason : "unknown", s_reportPath);
+}
+
+[[noreturn]] static void AndroidTerminateHandler() {
+    if (__sync_val_compare_and_swap(&s_handlingCrash, 0, 1) == 0) {
+        AndroidWriteReport("std::terminate (uncaught C++ exception or fatal runtime error)");
+    }
+    std::abort();
+}
+
+void CrashReporter::Install() {
+    // Preserve Android's debuggerd signal handlers. Replacing them with std::signal
+    // discards native tombstones/backtraces and hides the actual failing library.
+    std::set_terminate(AndroidTerminateHandler);
+}
+
+void CrashReporter::ShowFatalMessage(const char* title, const char* message) {
+    __android_log_print(ANDROID_LOG_ERROR, "rechan", "%s: %s", title, message);
+}
+
 #else
 
 #include <cerrno>
