@@ -61,7 +61,7 @@ provide the **debuggable** `app-debug.apk`; `run-as` cannot import the disc into
 non-debuggable APK. Give a downloadable artifact an unambiguous name such as:
 
 ```text
-rechan-vr-standalone-0.9.1-quest3-debug.apk
+rechan-vr-standalone-0.10.4-quest3.apk
 ```
 
 Record its SHA-256 and attach the source snapshot/installation instructions as useful.
@@ -76,7 +76,32 @@ Suggested release description:
 > Stuntmaster NTSC-U (SLUS-00684) disc image; no original game data is included.
 > Install the debug APK and import your image using the repository's ADB script.
 > VR stereo, Touch controls, MR window manipulation and miniature-character transfer
-> are available. External character locomotion and full-game validation are unfinished.
+> and Touch-controlled external character locomotion are available. Full-game validation is ongoing.
 
 Keep the legal/copyright notice and upstream/Android credits visible. Do not present
 this project as an official release or promise support for untested headsets/disc variants.
+
+
+## Automated preview releases
+
+The `Quest preview release` workflow builds a signed, debuggable ARM64 APK from an
+immutable `v*` tag. It checks the tag against `questVersion`, verifies the actual
+Quest Gradle Wrapper checksum, runs native regression tests, builds without game
+data, and audits the APK using `scripts/verify_quest_apk.py`. It then attaches the
+APK and `SHA256SUMS` to a GitHub prerelease using the workflow's repository token;
+no personal API token or private signing secret is needed for this development key.
+
+For a new preview:
+
+1. Update `questVersion`/`versionCode`, README and installation notes.
+2. Add `.github/releases/vVERSION.md` with changes and the own-copy requirement.
+3. Complete local tests/build/APK audit, then push the source commit normally.
+4. Create and push an annotated `vVERSION` tag. Watch Actions until the release
+   contains both APK and checksum; triggering a build alone is not publication.
+5. Download the public APK, check the checksum and contents, and smoke-test it on
+   Quest 3. Preserve existing tags; fix build infrastructure on the main branch
+   and use workflow dispatch with the existing release tag when retrying a build.
+
+Existing preview installations can be updated in place because all preview APKs
+use the same development sideload signature. Game data is supplied separately by
+the user and must never be attached to the release.
