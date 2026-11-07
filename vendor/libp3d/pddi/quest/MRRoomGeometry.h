@@ -17,6 +17,7 @@ struct MRRoomGeometry {
     bool ready=false;
     static bool Contains(const std::vector<std::array<float,2>>& polygon,float x,float y,float margin=0);
     bool Support(const std::array<float,3>& origin,float maxDrop,float radius,MRRoomSupport& result)const;
+    bool ContainsFloorProjection(const std::array<float,3>& point,float margin=0)const;
     bool BlocksSphere(const std::array<float,3>& centre,float radius)const;
 };
 }

@@ -347,6 +347,11 @@ void RechanAndroidResetTouch() {
 }
 
 bool RechanAndroidHandleInputEvent(AInputEvent* event) {
+#if defined(RC_PLATFORM_QUEST)
+    // OpenXR exclusively owns Touch input; Android's duplicate gamepad/hand
+    // events must not overwrite its filtered snapshot on another thread.
+    (void)event;return true;
+#endif
     switch (AInputEvent_getType(event)) {
         case AINPUT_EVENT_TYPE_KEY:
             return HandleKeyEvent(event);

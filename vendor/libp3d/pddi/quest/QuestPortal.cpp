@@ -1,4 +1,8 @@
 #include "pddi/quest/QuestPortal.h"
+#include "pddi/quest/QuestSlateText.h"
+#include <algorithm>
+#include <string>
+#include <cstdio>
 #include <GLES3/gl3.h>
 #include <android/log.h>
 #include <vector>
@@ -11,6 +15,9 @@ GLint frameMVP = -1,frameEditing=-1;
 GLuint alphaProgram=0;
 GLint alphaPose=-1,alphaFov=-1,alphaBounds=-1,alphaPlane=-1;
 GLsizei vertexCount = 0;
+std::string slateScene="MAIN MENU";
+unsigned slateTake=1;
+bool slateDirty=true;
 struct FrameVertex { float x, y, r, g, b, material; };
 
 GLuint Compile(GLenum type, const char* source) {
@@ -39,35 +46,33 @@ void Rect(std::vector<FrameVertex>& vertices, float x, float y, float w, float h
 }
 
 // Code-native lettering keeps the slate independent of game assets/fonts.
-const char* Glyph(char c) {
-    switch(c) {
-        case 'A': return "01110100011000111111100011000110001";
-        case 'C': return "01111100001000010000100001000001111";
-        case 'E': return "11111100001000011110100001000011111";
-        case 'H': return "10001100011000111111100011000110001";
-        case 'I': return "11111001000010000100001000010011111";
-        case 'J': return "00111000100001000010000101001001100";
-        case 'K': return "10001100101010011000101001001010001";
-        case 'M': return "10001110111010110101100011000110001";
-        case 'N': return "10001110011010110011100011000110001";
-        case 'R': return "11110100011000111110101001001010001";
-        case 'S': return "01111100001000001110000010000111110";
-        case 'T': return "11111001000010000100001000010000100";
-        case 'U': return "10001100011000110001100011000101110";
-        case '0': return "01110100011001110101110011000101110";
-        case '1': return "00100011000010000100001000010001110";
-        default: return "00000000000000000000000000000000000";
-    }
-}
 void Text(std::vector<FrameVertex>& vertices, const char* text, float x, float top, float pixel) {
     for (const char* c = text; *c; ++c, x += 6 * pixel) {
-        const char* glyph = Glyph(*c);
+        const char* glyph = SlateGlyph(*c);
         for (int row = 0; row < 7; ++row)
             for (int col = 0; col < 5; ++col)
                 if (glyph[row * 5 + col] == '1')
                     Rect(vertices, x + col*pixel, top-(row+1)*pixel, pixel*.88f, pixel*.88f);
     }
 }
+void UploadFrameGeometry(){
+    if(!frameVBO)return;
+    std::vector<FrameVertex> vertices;
+    Rect(vertices,-kSlateHalfWidth,kSlateBottom,2*kSlateHalfWidth,kSlateTop-kSlateBottom,0);
+    Rect(vertices,-1.5f,-1.405f,3.0f,.006f);
+    Text(vertices,"JACKIE CHAN",-1.48f,-1.28f,.013f);
+    Text(vertices,"STUNTMASTER",.45f,-1.28f,.013f);
+    const std::string scene="SCENE "+slateScene;
+    char take[32];std::snprintf(take,sizeof(take),"TAKE %02u",slateTake);
+    Text(vertices,scene.c_str(),-1.48f,-1.43f,std::min(.007f,1.8f/(6*std::max(size_t(1),scene.size()))));
+    Text(vertices,take,.45f,-1.43f,.007f);
+    vertexCount=GLsizei(vertices.size());
+    GLint oldBuffer=0;glGetIntegerv(GL_ARRAY_BUFFER_BINDING,&oldBuffer);
+    glBindBuffer(GL_ARRAY_BUFFER,frameVBO);
+    glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(FrameVertex),vertices.data(),GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER,oldBuffer);slateDirty=false;
+}
+
 }
 
 bool InitializePortalFrame() {
@@ -161,17 +166,9 @@ void main(){
     if(!ok){ShutdownPortalFrame();return false;}
     alphaPose=glGetUniformLocation(alphaProgram,"uPortalFromEye");alphaFov=glGetUniformLocation(alphaProgram,"uFov");
     alphaBounds=glGetUniformLocation(alphaProgram,"uBounds");alphaPlane=glGetUniformLocation(alphaProgram,"uPlaneZ");
-    std::vector<FrameVertex> vertices;
-    Rect(vertices,-kSlateHalfWidth,kSlateBottom,2*kSlateHalfWidth,kSlateTop-kSlateBottom,0);
-    Rect(vertices, -1.5f, -1.405f, 3.0f, .006f);
-    Text(vertices, "JACKIE CHAN", -1.48f, -1.28f, .013f);
-    Text(vertices, "STUNTMASTER", .45f, -1.28f, .013f);
-    Text(vertices, "SCENE 01", -1.48f, -1.43f, .007f);
-    Text(vertices, "TAKE 01", .45f, -1.43f, .007f);
-    vertexCount = static_cast<GLsizei>(vertices.size());
-    glGenVertexArrays(1, &frameVAO); glGenBuffers(1, &frameVBO);
-    glBindVertexArray(frameVAO); glBindBuffer(GL_ARRAY_BUFFER, frameVBO);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size()*sizeof(FrameVertex), vertices.data(), GL_STATIC_DRAW);
+    glGenVertexArrays(1,&frameVAO);glGenBuffers(1,&frameVBO);
+    glBindVertexArray(frameVAO);glBindBuffer(GL_ARRAY_BUFFER,frameVBO);
+    UploadFrameGeometry();
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(FrameVertex), nullptr);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(FrameVertex), reinterpret_cast<void*>(2*sizeof(float)));
     glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(FrameVertex), reinterpret_cast<void*>(5*sizeof(float)));
@@ -180,18 +177,26 @@ void main(){
     return true;
 }
 
+void SetPortalCaption(const char* scene,unsigned take){
+    const std::string label=scene?scene:"MAIN MENU";
+    if(slateScene==label&&slateTake==take)return;
+    slateScene=label.substr(0,36);slateTake=std::max(1u,take);slateDirty=true;
+    __android_log_print(ANDROID_LOG_INFO,"ReChanXR","Slate: SCENE %s / TAKE %02u",slateScene.c_str(),slateTake);
+}
+
 void ShutdownPortalFrame() {
     if (frameVBO) glDeleteBuffers(1, &frameVBO);
     if (frameVAO) glDeleteVertexArrays(1, &frameVAO);
     if (frameProgram) glDeleteProgram(frameProgram);
     if(alphaProgram)glDeleteProgram(alphaProgram);
     alphaProgram=0;
-    frameVBO=frameVAO=frameProgram=0;
+    frameVBO=frameVAO=frameProgram=0;slateDirty=true;
 }
 
 void DrawPortalFrame(const std::array<Mat4,2>& eyeVP,
                      const std::array<unsigned,2>& eyeFramebuffers, int width, int height,bool editing) {
     if (!frameProgram) return;
+    if(slateDirty)UploadFrameGeometry();
     GLint previousFBO=0, program=0, vao=0, viewport[4];
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFBO);
     glGetIntegerv(GL_CURRENT_PROGRAM, &program);

@@ -198,6 +198,9 @@ static bool IsControlInteractive(int32_t ci, HudContext ctx) {
 // ---------------------------------------------------------------------------
 
 void Update() {
+#if defined(RC_PLATFORM_QUEST)
+    return; // Native OpenXR owns input and UI on Quest.
+#endif
     RecomputeLayout();
 
     const HudContext ctx = touchhud::GetContext();
@@ -346,6 +349,9 @@ void Update() {
 }
 
 void Render() {
+#if defined(RC_PLATFORM_QUEST)
+    return; // Native OpenXR owns input and UI on Quest.
+#endif
     if (s_alpha <= 0.01f) return;
     RecomputeLayout();
 
@@ -436,6 +442,9 @@ void Render() {
 }
 
 void Reset() {
+#if defined(RC_PLATFORM_QUEST)
+    return; // Native OpenXR owns input and UI on Quest.
+#endif
     ResetAll();
     s_visible = false;
     s_alpha = 0.0f;
@@ -477,6 +486,9 @@ void EndMovieSkip() {
 }
 
 void UpdateMovieSkip() {
+#if defined(RC_PLATFORM_QUEST)
+    return; // Native OpenXR owns input and UI on Quest.
+#endif
     if (!s_movieSkippable) return;
     // Physical pad connected: Start on the real pad skips the movie, so the
     // on-screen skip button (and its touch path) stays suspended.
@@ -518,6 +530,9 @@ void UpdateMovieSkip() {
 }
 
 void RenderMovieSkip() {
+#if defined(RC_PLATFORM_QUEST)
+    return; // Native OpenXR owns input and UI on Quest.
+#endif
     if (!s_movieSkippable) return;
     if (androidbridge::IsPhysicalPadConnected()) return;
     ScreenDraw::Batch batch;

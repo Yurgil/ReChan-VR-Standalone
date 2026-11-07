@@ -657,7 +657,6 @@ void feCustomMenuMgr::BuildPages() {
 #endif
 #if defined(RC_PLATFORM_QUEST)
         Toggle("FE_QMR", EntryBinding_QuestMR),
-        List("FE_QSZ", EntryBinding_QuestMRSize, 1, 0, 4),
         Button("FE_QRI", EntryEvent_GoPage, MenuPage_QuestRoom),
         List("FE_LNG", EntryBinding_Language, 1, 0, (s32)NumLanguages - 1),
 #else
@@ -3097,7 +3096,6 @@ s32 feCustomMenuMgr::GetBoundValue(const Entry& e) const {
         case EntryBinding_ControllerPromptStyle: return ControllerPromptManager::GetStyle();
 #if defined(RC_PLATFORM_QUEST)
         case EntryBinding_QuestMR: return questxr::MixedRealityRequested()?1:0;
-        case EntryBinding_QuestMRSize: return questxr::MRWindowSize();
         case EntryBinding_QuestJackie: return questxr::JackieInteractionRequested()?1:0;
 #endif
         case EntryBinding_Language: return (s32)g_customText.GetLanguage();
@@ -3137,7 +3135,6 @@ void feCustomMenuMgr::ApplyValue(const Entry& e, s32 v) {
 
 #if defined(RC_PLATFORM_QUEST)
     if(e.binding==EntryBinding_QuestMR){questxr::SetMixedReality(v!=0);return;}
-    if(e.binding==EntryBinding_QuestMRSize){questxr::SetMRWindowSize(v);return;}
     if(e.binding==EntryBinding_QuestJackie){questxr::SetJackieInteraction(v!=0);return;}
 #endif
     if (e.binding == EntryBinding_MusicVol) {
@@ -5667,12 +5664,6 @@ void feCustomMenuMgr::RenderCurrentPage() {
                     PrintValueWithTouchSteppers(i, cfgText, valueScreenX, rowScreenY,
                                                 selected, selectedColor, normalColor);
                 }
-#if defined(RC_PLATFORM_QUEST)
-                else if(item.binding==EntryBinding_QuestMRSize){
-                    char sizeText[32];snprintf(sizeText,sizeof(sizeText),"%.0f cm",100*questxr::MRWindowWidth(GetBoundValue(item)));
-                    PrintValueWithTouchSteppers(i,sizeText,valueScreenX,rowScreenY,selected,selectedColor,normalColor);
-                }
-#endif
                 else if (item.binding == EntryBinding_Language) {
                     const char* langToken = GetLanguageDisplayToken(GetBoundValue(item));
                     const char* langText = langToken ? Localize(langToken) : nullptr;

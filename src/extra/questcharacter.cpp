@@ -52,6 +52,14 @@ void SetAnimation(int id){
     if(animation==id)return;
     clone->ApplyAnimToModel(0,id,ANIM_LOOP,0,0);animation=id;animationTime=0;
 }
+void SamplePose(AnimStructure* anim,s32 frame){
+    // Match the game's sequence sampler without advancing Player/AI callbacks.
+    if(anim->sequence&&anim->flip){
+        s32 local=0;auto* part=anim->sequence->ResolvePart(frame>>16,local);
+        if(part){if(anim->flip->anim!=part){anim->flip->anim=part;anim->flip->dirty=1;}frame=(local<<16)|(frame&0xFFFF);}
+    }
+    anim->ApplyFlipPose(frame);
+}
 void BlendCaptured(float weight){
     auto* skel=Skeleton(clone);if(!skel||captured.size()!=skel->numJoints)return;
     for(u32 i=0;i<skel->numJoints;++i){auto& j=skel->joints[i];const auto& c=captured[i];
@@ -65,17 +73,27 @@ void Draw(){
     if(first){auto* skel=Skeleton(source);captured.assign(skel->joints,skel->joints+skel->numJoints);animation=-1;wasGrounded=false;}
     const float dt=first?0.f:std::clamp(actor.Elapsed()-lastElapsed,0.f,.05f);lastElapsed=actor.Elapsed();wasActive=true;
     if(!actor.Grounded()){SetAnimation(39);wasGrounded=false;}
-    else if(!wasGrounded){SetAnimation(40);wasGrounded=true;}
+    else{
+        if(!wasGrounded)SetAnimation(40);
+        if(actor.Action()==questxr::MRCharacterAction::Punch)SetAnimation(57);
+        else if(actor.Action()==questxr::MRCharacterAction::Kick)SetAnimation(53);
+        else if(actor.Action()==questxr::MRCharacterAction::Roll)SetAnimation(24);
+        else if(actor.Moving())SetAnimation(2);
+        else if(animation!=40)SetAnimation(22);
+        wasGrounded=true;
+    }
     auto* anim=static_cast<AnimStructure*>(clone->animStructure);if(!anim)return;
-    animationTime+=dt;const float duration=float(anim->endFrame+FIX16_ONE)/FIX16_ONE/30.f;
+    const float strideScale=actor.StandingHeight()/questxr::kMRJackieStandingHeight;
+    animationTime+=dt*(animation==2?std::clamp(actor.MoveSpeed()/(.25f*strideScale),.2f,1.5f):1.f);const float duration=float(anim->endFrame+FIX16_ONE)/FIX16_ONE/30.f;
     if(animation==40&&animationTime>=duration){SetAnimation(22);anim=static_cast<AnimStructure*>(clone->animStructure);}
-    const float frame=animation==40?std::min(animationTime*30.f,float(anim->endFrame)/FIX16_ONE):std::fmod(animationTime*30.f,std::max(1.f,float(anim->endFrame+FIX16_ONE)/FIX16_ONE));
-    anim->ApplyFlipPose(s32(frame*FIX16_ONE));
+    const bool actionPose=actor.Grounded()&&actor.Action()!=questxr::MRCharacterAction::None;
+    const float frame=actionPose?actor.ActionProgress()*float(anim->endFrame)/FIX16_ONE:animation==40?std::min(animationTime*30.f,float(anim->endFrame)/FIX16_ONE):std::fmod(animationTime*30.f,std::max(1.f,float(anim->endFrame+FIX16_ONE)/FIX16_ONE));
+    SamplePose(anim,s32(frame*FIX16_ONE));
     if(actor.Returning())BlendCaptured(questxr::TransferEase(actor.ReturnProgress()));
     else if(actor.Elapsed()<.15f)BlendCaptured(1-questxr::TransferEase(actor.Elapsed()/.15f));
     V low,high,chest;if(!Bounds(clone,low,high,&chest))return;
     const auto& snapshot=actor.Snapshot();V offset;for(int d=0;d<3;++d)offset[d]=snapshot.grip[d]-chest[d];
-    if(actor.Grounded())offset[1]=snapshot.up>0?snapshot.standingLow[1]-low[1]:snapshot.standingHigh[1]-high[1];
+    if(actor.InRoom())offset[1]=snapshot.up>0?snapshot.standingLow[1]-low[1]:snapshot.standingHigh[1]-high[1];
     const auto oldWorld=p3d::context->GetWorldMatrix();const bool oldMirror=p3d::context->GetWorldMirror();
     p3d::context->SetWorldMatrix(questxr::Translation(offset[0],offset[1],offset[2]));
     p3d::context->SetWorldMirror(false);p3d::context->SetCullMode(PDDI_CULL_NONE);p3d::context->SetTexture(nullptr);
@@ -94,7 +112,9 @@ bool Prepare(SModel* model){
     if(source==model&&asset==original&&clone)return true;
     Destroy();
     if(!g_characterManager)return false;
-    for(int id:{22,39,40}){if(!g_characterManager->GetAnimation(0,id))g_characterManager->LoadAnimation(0,id,1,nullptr);if(!g_characterManager->GetAnimation(0,id))return false;}
+    // Player::AS_DIVE_ROLL uses24;27 is the guard-release transition.
+    // Canonical unarmed move IDs: player combo root maps punch to57 and kick to53.
+    for(int id:{22,39,40,2,24,53,57}){if(!g_characterManager->GetAnimation(0,id))g_characterManager->LoadAnimation(0,id,1,nullptr);if(!g_characterManager->GetAnimation(0,id))return false;}
     source=model;asset=original;clone=new SModel;clone->SetOriginalSTree(original);
     if(Skeleton(clone)==Skeleton(source)){LOG("[MR Jackie] cannot isolate skeleton");Destroy();return false;}
     auto* skel=Skeleton(clone);
@@ -117,6 +137,7 @@ void Capture(SModel* model,const Mat4& world){
     questxr::PublishCharacter(target,p3d::context->GetViewMatrix(),world);
     if(!questxr::CharacterActive())wasActive=false;
 }
+bool IsDetached(const Thing* thing){return thing&&thing==Player::s_player&&questxr::CharacterActive();}
 bool Hide(const Model* model){return model==source&&questxr::CharacterActive();}
 void ModelDestroyed(const Model* model){if(model==source)Destroy();}
 void TreeDestroyed(const OriginalSTree* tree){if(tree==asset)Destroy();}

@@ -1,6 +1,6 @@
 # Build ReChan VR Standalone for Quest 3
 
-Development version: `0.9.1-quest-dev` (versionCode 26).
+Development version: `0.10.4-quest-dev` (versionCode 31).
 App ID: `org.rechan.quest`; activity: `com.deivid22srk.rechan.GameActivity`.
 The launcher label remains **ReChan Quest** for existing installations.
 
@@ -111,6 +111,47 @@ is off. Unsupported desktop display settings are hidden.
 
 MR window/hand controls, optional one-room scene loading and miniature-character
 transfer are described in the installation guide. Room loading and transfer were
-confirmed on Quest 3 in 0.8.1 and 0.9.0. Movement control for the external miniature,
-environment-depth occlusion and full-game/performance validation remain unfinished.
+confirmed on Quest 3 in 0.8.1 and 0.9.0. 0.10.0 adds Touch locomotion/jump/actions for a 10 cm miniature with independent
+room collision/support, neutral-input handoff, swept substeps and room-floor bounds;
+headset acceptance is pending. Environment-depth occlusion and full-game/performance
+validation remain unfinished.
 No persistent window anchor is created or saved.
+
+
+0.10.1 removes the MR window-size menu/binding; resizing is direct manipulation.
+Optical trackers are lazily created only in shared editing mode with both Touch
+controllers put down, and destroyed on Touch pickup, mode exit or focus loss.
+The standalone roll now uses the same clip24 as Player AS_DIVE_ROLL, with correct
+sequence-part sampling. SCENE shows the current area/stage or MAIN MENU; TAKE is
+counted once per confirmed nonfatal death and reset by main-menu/game-over exit.
+Label geometry is uploaded on content change only, keeping the existing stable
+ink/frame layering. Procedural lettering supports A–Z and every take digit.
+
+
+0.10.2 pairs simultaneous-hand tracking resume with pause before destroying trackers.
+OpenXR is the exclusive Quest input writer; Android/mobile touch paths are disabled.
+A per-control release latch replaces the global wait-for-neutral pad lock. Before extraction, gameplay
+suspends during window editing and when Touch actions are unavailable; XR focus
+loss always suspends gameplay.
+Rendering and input polling continue, and the pause menu remains accessible.
+The extracted Jackie supports right-stick height adjustment from 5 cm to 1.566 m,
+with a fixed foot pivot, scaled room collisions and obstacle-limited growth.
+
+
+0.10.3 lowers maximum MR standing-reference height to 90% of the former limit
+(1.566 m). The original level now runs while the MR clone is extracted: only the
+hidden player is skipped by movement, Think, animation and collision/combat paths;
+its animation tick baseline is maintained to avoid fast-forward on return.
+World reconstruction uses a common .002 scale in render, portal clipping, stereo
+culling and character picking. This pushes close camera geometry behind the frame
+without widening the authored camera or enabling foreground spill. Reference-eye
+projection and depth ordering remain unchanged; head-motion parallax is reduced.
+
+
+0.10.4 fixes false level pauses when the runtime temporarily deactivates one Touch
+profile/stick. Availability uses each hand's stick/trigger/grip actions independently;
+the remaining controller keeps working. Only sustained absence of both controllers
+(0.5 seconds), explicit window editing or focus loss suspends the source level.
+Tag pushes matching `v*` build and audit a signed ARM64 preview APK on GitHub Actions,
+then publish it and SHA256SUMS to a GitHub prerelease. Original game assets are not
+required by this build and are rejected by `scripts/verify_quest_apk.py`.

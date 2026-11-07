@@ -1,4 +1,5 @@
 #include "gen/model.h"
+#include "gen/time.h"
 #include "extra/questcharacter.h"
 #include "gen/animmgr.h"
 #include "gen/animmat.h"
@@ -1858,6 +1859,14 @@ void SModel::Show(u32 flags) {
 
 // PSX: Animate__6SModel (MODEL.CPP:1416, 0x8006F640)
 void SModel::Animate() {
+#if defined(RC_PLATFORM_QUEST)
+    if(questcharacter::IsDetached(backPtr)){
+        if(auto* anim=static_cast<AnimStructure*>(animStructure)){
+            anim->prevTick=anim->currentTick=g_time?s32(g_time->frameCounter):0;
+        }
+        return;
+    }
+#endif
     MARKFUNCTION(0x8006F640);
     if (animStructure) {
         AnimStructure* anim = (AnimStructure*)animStructure;
@@ -2517,6 +2526,9 @@ HumanoidModel::~HumanoidModel() {
 
 // PSX: Animate__13HumanoidModel (MHUMAN.CPP:207, 0x8006E418)
 void HumanoidModel::Animate() {
+#if defined(RC_PLATFORM_QUEST)
+    if(questcharacter::IsDetached(backPtr)){SModel::Animate();return;}
+#endif
     MARKFUNCTION(0x8006E418);
     SModel::Animate();
 

@@ -95,6 +95,24 @@ int main(){
             assert(close(windowY,ndc(original,x,y,-depth,1)));
         }
     }
+    // A close actor used to intersect the physical front plane even at the
+    // centre of the frame. Deeper reconstruction keeps the whole body inside,
+    // preserves original screen framing and does not widen the camera FOV.
+    {
+        const auto original=PerspectiveReversedZTangents(.4f,.3f,1,65535);
+        const auto optics=CameraOptics(original);
+        for(float depth:{1400.f,1800.f,3500.f,12000.f}){
+            const float point[]={80.f,40.f,-depth};
+            const auto old=Clip(optics*Scale(.001f),point);
+            const auto moved=Clip(optics*Scale(kDioramaWorldScale),point);
+            const float surface[]={moved.x,moved.y,moved.z};
+            assert(PortalRayVisible(eyeL,surface)&&PortalRayVisible(eyeR,surface));
+            assert(close(kPortalDepth*moved.x/-moved.z/kPortalHalfWidth,ndc(original,point[0],point[1],point[2],0)));
+            assert(close(old.x/-old.z,moved.x/-moved.z));
+            assert(close(old.y/-old.z,moved.y/-moved.z));
+            if(depth<2400.f){const float clipped[]={old.x,old.y,old.z};assert(!PortalRayVisible(eye,clipped));}
+        }
+    }
     static_assert(sizeof(Mat4)==16*sizeof(float));
     std::puts("Quest math: pose inverse, asymmetric FOV, reversed Z, stereo disparity, placement, binocular culling and diorama aperture OK");
 }

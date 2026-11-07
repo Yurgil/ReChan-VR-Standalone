@@ -16,6 +16,7 @@ XrPosef Filter(const XrPosef& previous,const XrPosef& target,float amount){
 }
 }
 void QuestHands::Initialize(XrInstance instance,XrSystemId system,XrSession session,bool aimEnabled,bool dataEnabled,bool simultaneousEnabled){
+    Shutdown();
     aim=aimEnabled;data=dataEnabled;
     XrSystemHandTrackingPropertiesEXT hands{XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT};
     XrSystemSimultaneousHandsAndControllersPropertiesMETA simultaneous{XR_TYPE_SYSTEM_SIMULTANEOUS_HANDS_AND_CONTROLLERS_PROPERTIES_META};
@@ -39,6 +40,7 @@ void QuestHands::Initialize(XrInstance instance,XrSystemId system,XrSession sess
     }
     if(simultaneousEnabled&&simultaneous.supportsSimultaneousHandsAndControllers){
         xrGetInstanceProcAddr(instance,"xrResumeSimultaneousHandsAndControllersTrackingMETA",reinterpret_cast<PFN_xrVoidFunction*>(&resumeSimultaneous));
+        xrGetInstanceProcAddr(instance,"xrPauseSimultaneousHandsAndControllersTrackingMETA",reinterpret_cast<PFN_xrVoidFunction*>(&pauseSimultaneous));
     }
     __android_log_print(ANDROID_LOG_INFO,"ReChanXR","MR hands: simultaneous supported=%d",simultaneous.supportsSimultaneousHandsAndControllers);
     __android_log_print(ANDROID_LOG_INFO,"ReChanXR","MR input: hand trackers ready; aim=%d source=%d",aim,data);
@@ -108,11 +110,21 @@ std::array<MRPointer,2> QuestHands::Locate(XrSpace space,XrTime time,const std::
     return result;
 }
 void QuestHands::Resume(XrSession session){
-    if(resumeSimultaneous){XrSimultaneousHandsAndControllersTrackingResumeInfoMETA info{XR_TYPE_SIMULTANEOUS_HANDS_AND_CONTROLLERS_TRACKING_RESUME_INFO_META};__android_log_print(ANDROID_LOG_INFO,"ReChanXR","MR input: simultaneous tracking result %d",resumeSimultaneous(session,&info));}
+    if(resumeSimultaneous&&pauseSimultaneous&&!simultaneousRunning){
+        XrSimultaneousHandsAndControllersTrackingResumeInfoMETA info{XR_TYPE_SIMULTANEOUS_HANDS_AND_CONTROLLERS_TRACKING_RESUME_INFO_META};
+        const auto result=resumeSimultaneous(session,&info);
+        simultaneousRunning=XR_SUCCEEDED(result);simultaneousSession=session;
+        __android_log_print(ANDROID_LOG_INFO,"ReChanXR","MR input: simultaneous resume result %d",result);
+    }
 }
 void QuestHands::Shutdown(){
+    if(simultaneousRunning&&pauseSimultaneous){
+        XrSimultaneousHandsAndControllersTrackingPauseInfoMETA info{XR_TYPE_SIMULTANEOUS_HANDS_AND_CONTROLLERS_TRACKING_PAUSE_INFO_META};
+        __android_log_print(ANDROID_LOG_INFO,"ReChanXR","MR input: simultaneous pause result %d",pauseSimultaneous(simultaneousSession,&info));
+    }
+    simultaneousRunning=false;simultaneousSession=XR_NULL_HANDLE;
     for(auto& tracker:trackers){if(tracker&&destroy)destroy(tracker);tracker=XR_NULL_HANDLE;}
-    ClearInput();resumeSimultaneous=nullptr;locate=nullptr;destroy=nullptr;
+    ClearInput();resumeSimultaneous=nullptr;pauseSimultaneous=nullptr;locate=nullptr;destroy=nullptr;
 }
 void QuestHands::ClearInput(){pinching={};lastSample={};lastSource={-1,-1};lastDiagnostic={-1,-1};visuals={};}
 }

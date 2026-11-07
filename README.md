@@ -8,7 +8,8 @@ not for streaming or playing.
 (NTSC-U, SLUS-00684) and supply your own disc image. No game disc, extracted
 PlayStation game data, levels, models, audio or movies are distributed here.**
 
-Development build: **0.9.1-quest-dev**. Repository: [Yurgil/ReChan-VR-Standalone](https://github.com/Yurgil/ReChan-VR-Standalone).
+Development build: **0.10.4-quest-dev**. Repository: [Yurgil/ReChan-VR-Standalone](https://github.com/Yurgil/ReChan-VR-Standalone).
+**Download a ready-to-install APK:** [GitHub Releases](https://github.com/Yurgil/ReChan-VR-Standalone/releases).
 The installed app is currently named **ReChan Quest** (`org.rechan.quest`).
 
 **This project is still in active development. It has been tested only on Meta
@@ -23,13 +24,17 @@ Quest 3. Operation on other headsets is not guaranteed.**
 - A shared interaction mode, toggled by pressing both thumbsticks together.
 - Optional use of one room scanned by Quest: take Jackie through the window,
   hold him as a miniature, place him on a surface, and return him to the game.
-  His reference standing height outside the window is 7 cm; he uses an airborne
-  animation while held, then lands and idles on a surface.
+  His reference standing height outside the window is 10 cm; he uses an airborne
+  animation while held. Once placed, he supports Touch movement, jumps, attacks
+  and rolls. Right stick up/down changes his reference height from 5 to 156.6 cm.
+- The original level continues while Jackie is outside; its hidden player is
+  isolated from movement and combat until return.
 
-This is an experimental port, not a fully validated release. Whole-game testing,
-performance tuning and controller movement for Jackie outside the window are
-still in progress. Other headsets have not been tested.
-Window editing no longer spawns the old diagnostic cube.
+This is an experimental port, not a fully validated release. Whole-game testing
+and performance tuning are still in progress. MR room locomotion and direct height adjustment are experimental. Other headsets have not been tested.
+Window editing no longer spawns the old diagnostic cube. Slate SCENE shows the
+current stage (or MAIN MENU); TAKE starts at 01 and increases after death/restart.
+Leaving for the main menu or game over resets it. Pausing preserves the count.
 
 ## Installation
 
@@ -37,7 +42,8 @@ Read the [installation guide](docs/quest/INSTALL.md)
 ([инструкция на русском](docs/quest/INSTALL_RU.md)). In brief:
 
 1. Enable Quest Developer Mode, connect over USB and approve USB debugging.
-2. Obtain this project's **debug APK**, or [build it](docs/quest/BUILDING.md).
+2. Download the **APK from [Releases](https://github.com/Yurgil/ReChan-VR-Standalone/releases)**, or [build it](docs/quest/BUILDING.md).
+   Preview APKs use the stable sideload key and are debuggable for the data importer.
 3. Extract your own disc archive on your computer. Supply the **BIN/ISO image**,
    not the ZIP/7z archive or CUE descriptor.
 4. From a Bash shell in this repository, install and copy your image:
@@ -83,7 +89,7 @@ release to distinguish them from the two-stick combination.
 
 ## Mixed reality
 
-Enable **Options → Mixed Reality**. Window size can also be changed in Options.
+Enable **Options → Mixed Reality**. Resize the window directly with hands or Touch.
 Press both thumbsticks together: the frame outline turns cyan. Grab a frame strip
 with a Touch trigger/grip to move it, a corner to resize, or use two controllers
 to scale. Put the controllers down, wait 1.25 seconds, then use a hand pinch on
@@ -95,7 +101,20 @@ room scan or requests the system setup if needed. Basic MR window editing needs
 no room scan. In a playable level, move the window within reach, put down Touch,
 reach into the opening opposite Jackie's body and pinch to take him out. Release
 him over a scanned surface; pinch again and carry him behind the window surface
-to return him. The original level pauses during transfer and resumes on return.
+to return him. The original level keeps running during transfer and while Jackie is in the room;
+its hidden player is isolated from movement, combat and damage until return. After placing
+Jackie on a scanned surface, pick up Touch and centre the sticks/release the
+buttons once. Hand trackers are active only in interaction mode after both Touch controllers
+are put down; ordinary gameplay and active Touch input do not track optical hands.
+Keep interaction mode enabled: the left stick moves him relative
+to your head direction, the right trigger jumps, A/B punch/kick and right grip
+rolls. Push the right stick up/down to change his standing height from 5 cm
+to 1.566 m (default 10 cm); his feet stay on the support surface and room
+geometry limits growth. His movement uses the scanned floor/furniture/walls.
+Before extraction, the level pauses during window editing or sustained loss of
+both Touch controllers. A missing stick or a single controller no longer pauses
+the level or disables the other hand; leaving editing restores movement immediately, with release required only
+for each button/trigger that was held during editing. Press both sticks to leave interaction and return to the level.
 Turning off interaction or losing tracking while holding Jackie returns him to
 the original level. Scanned surface outlines are currently visible in interaction mode.
 

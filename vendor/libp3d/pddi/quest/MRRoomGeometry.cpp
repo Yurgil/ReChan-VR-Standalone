@@ -43,6 +43,17 @@ bool MRRoomGeometry::Support(const V& origin,float maxDrop,float radius,MRRoomSu
     }
     return found;
 }
+bool MRRoomGeometry::ContainsFloorProjection(const V& point,float margin)const{
+    if(!ready)return false;
+    for(const auto& s:surfaces){
+        if(!s.floor||!s.located)continue;
+        const auto inv=RigidInverse(s.pose);const auto p=Point(inv,point),d=Direction(inv,{0,-1,0});
+        if(std::fabs(d[2])<1e-7f)continue;
+        const float t=-p[2]/d[2];
+        if(Contains(s.boundary,p[0]+t*d[0],p[1]+t*d[1],margin))return true;
+    }
+    return false;
+}
 bool MRRoomGeometry::BlocksSphere(const V& centre,float radius)const{
     if(!ready)return false;
     for(const auto& s:surfaces){

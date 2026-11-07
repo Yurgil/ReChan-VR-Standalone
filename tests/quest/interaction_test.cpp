@@ -1,4 +1,6 @@
 #include "pddi/quest/MRInteraction.h"
+#include "pddi/quest/GameplayInputGate.h"
+#include "pddi/quest/ControllerAvailability.h"
 #include "pddi/quest/MRInteractionMode.h"
 #include "pddi/quest/ControllerPresence.h"
 #include <cassert>
@@ -13,6 +15,33 @@ MRPointer Direct(float x,float y){auto p=Ray(x,y);p.grip=Translation(x,y,-1.2f);
 std::array<float,3> head{0,0,0};
 }
 int main(){
+    {
+        GameplayInputGate gate;
+        // An editor grip held indefinitely cannot suppress A/B or movement.
+        assert(gate.FilterButtons(4,true)==0);gate.FilterTrigger(0,.8f,true);gate.FilterTrigger(1,0,true);
+        for(int i=0;i<1000;++i){assert(gate.FilterButtons(5,false)==1);assert(gate.FilterTrigger(0,.8f,false)==0);assert(gate.FilterTrigger(1,.5f,false)==.5f);}
+        assert(gate.FilterButtons(1,false)==1);assert(gate.FilterButtons(5,false)==5);
+        assert(gate.FilterTrigger(0,0,false)==0);assert(gate.FilterTrigger(0,.06f,false)==.06f);
+        gate.Reset();assert(gate.FilterButtons(5,false)==0);assert(gate.FilterButtons(0,false)==0);assert(gate.FilterButtons(1,false)==1);
+    }
+
+    {
+        ControllerAvailability available;
+        available.Update(true,true,0);assert(!available.Blocked(false,0));
+        // Regression from the Quest log: right profile vanishes for 10.8s,
+        // while the left controller and XR rendering remain active.
+        available.Update(true,false,1);assert(available.Mask()==1);
+        for(int i=0;i<1080;++i)assert(!available.Blocked(false,1+i*.01));
+        available.Update(false,true,12);assert(available.Mask()==2&&!available.Blocked(false,12));
+        // Both lost transiently is not a forced gameplay pause either.
+        available.Update(false,false,13);assert(!available.Blocked(false,13.49));
+        available.Update(true,false,13.49);assert(!available.Blocked(false,14));
+        // A real loss of the entire pad still protects the player.
+        available.Update(false,false,15);assert(available.Blocked(false,15.5));
+        available.Update(false,true,16);assert(!available.Blocked(false,16));
+        assert(available.Blocked(true,16));
+        available.Reset();available.Update(false,false,100);assert(!available.Blocked(false,100));
+    }
     ControllerPresence presence;
     assert(!presence.Update(0,false,false,1));
     assert(presence.Update(0,true,false,2));

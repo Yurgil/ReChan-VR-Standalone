@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-PUBLIC_ROOTS = {"src", "vendor", "res", "scripts", "tools", "switch", "android", "tests"}
+PUBLIC_ROOTS = {".github", "src", "vendor", "res", "scripts", "tools", "switch", "android", "tests"}
 PUBLIC_FILES = {".gitignore", "LICENSE", "README.md", "premake5.lua", "premake5.cmd"}
 PUBLIC_DOCS = {
     "docs/BUILDING.md", "docs/MODDING.md", "docs/REFERENCE.md",

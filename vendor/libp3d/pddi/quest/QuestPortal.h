@@ -7,6 +7,10 @@ namespace questxr {
 inline constexpr float kPortalHalfWidth = 1.6f;
 inline constexpr float kPortalHalfHeight = 1.2f;
 inline constexpr float kPortalDepth = 2.4f;
+// Reconstruct the authored camera image deeper behind the physical aperture.
+// Uniform XYZ scaling preserves the reference-eye image/FOV and depth ordering;
+// widening the camera would instead expose unfinished edges of the PSX levels.
+inline constexpr float kDioramaWorldScale = .002f;
 inline constexpr float kSlateHalfWidth=1.82f,kSlateBottom=-1.51f,kSlateTop=1.62f;
 // Magnify the authored camera image into the physical window. At the recenter
 // eye, every point maps to exactly the original game NDC, including scripted zoom.

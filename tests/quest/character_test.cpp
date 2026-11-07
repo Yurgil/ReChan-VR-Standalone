@@ -15,7 +15,7 @@ int main(){
   auto& h=hand[0];h.valid=true;h.source=1;h.grip=Translation(0,1.2f,-.61f);actor.Update(hand,window,eye,room,false,dt);h.down=true;actor.Update(hand,window,eye,room,true,dt);assert(!actor.Active());
   h.down=false;actor.Update(hand,window,eye,room,false,dt);h.down=true;actor.Update(hand,window,eye,room,false,dt);assert(actor.Held());Same(actor.Transform(),window.LocalToReference()*target.modelToPortal);
   h.grip=Translation(.1f,1.2f,-.4f);for(int i=0;i<int(hz/2);++i)actor.Update(hand,window,eye,room,false,dt);
-  const auto m=actor.Transform();for(int c=0;c<3;++c){float length=0;for(int r=0;r<3;++r)length+=m(r,c)*m(r,c);assert(Near(std::sqrt(length)*target.standingHeight,.07f));}
+  const auto m=actor.Transform();for(int c=0;c<3;++c){float length=0;for(int r=0;r<3;++r)length+=m(r,c)*m(r,c);assert(Near(std::sqrt(length)*target.standingHeight,.10f));}
   auto grip=m*Translation(target.grip[0],target.grip[1],target.grip[2]);for(int d=0;d<3;++d)assert(Near(grip(d,3),h.grip(d,3)));assert(m(1,1)*target.up>0);
   h.down=false;actor.Update(hand,window,eye,room,false,dt);for(int i=0;i<int(hz*2);++i)actor.Update(hand,window,eye,room,false,dt);assert(actor.Grounded());
   const float footY=target.up>0?0:180;const auto foot=actor.Transform()*Translation(0,footY,0);assert(Near(foot(1,3),.751f));
@@ -26,5 +26,5 @@ int main(){
  }
  // Controllers do not select the character; assets/source invalidation cancel ownership.
  auto room=Room();PortalPlacement window;window.SetCentered(Translation(0,1.2f,-.6f),-kPortalDepth,.3f);MRCharacter actor;actor.SetTarget(Target(1,false));std::array<MRPointer,2> hands{};hands[0].valid=true;hands[0].grip=Translation(0,1.2f,-.61f);actor.Update(hands,window,{0,1.2f,0},room,false,.02f);hands[0].down=true;actor.Update(hands,window,{0,1.2f,0},room,false,.02f);assert(!actor.Active());actor.Invalidate();assert(!actor.HasTarget());
- std::cout<<"MR Jackie: projected pinch, exclusive ownership, canonical 7 cm/upright, stable grip, table landing, return, tracking/room loss OK\n";
+ std::cout<<"MR Jackie: projected pinch, exclusive ownership, canonical 10 cm/upright, stable grip, table landing, return, tracking/room loss OK\n";
 }

@@ -1,3 +1,4 @@
+#include "extra/questcharacter.h"
 #include "ai/player.h"
 #include "ai/colfight.h"
 #include "ai/obstacle.h"
@@ -319,6 +320,9 @@ Player::~Player() {
 
 // PSX: Think__6Player (PLAYER.CPP:1155)
 void Player::Think() {
+#if defined(RC_PLATFORM_QUEST)
+    if(questcharacter::IsDetached(this))return;
+#endif
     MARKFUNCTION(0x8002FE30);
 #if NEW_CHEATS
     if (IsCheatEnabled(CheatOption::GodMode)) health = maxHealth;

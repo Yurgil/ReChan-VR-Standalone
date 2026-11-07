@@ -15,6 +15,7 @@ int main(){
     assert(room.Support({0,2,0},3,.03f,hit)&&hit.surface==1&&std::fabs(hit.point[1]-.75f)<.0001f);
     assert(room.Support({1.5f,2,0},3,.03f,hit)&&hit.surface==0&&std::fabs(hit.point[1])<.0001f);
     assert(!room.Support({2.5f,2,0},3,.03f,hit));assert(!room.Support({0,2,0},.5f,0,hit));
+    assert(room.ContainsFloorProjection({0,8,0},.01f)&&!room.ContainsFloorProjection({3,8,0}));
     assert(room.BlocksSphere({0,.5f,0},.03f));assert(room.BlocksSphere({0,1,-1.99f},.03f));assert(!room.BlocksSphere({1,1,0},.03f));
     room.surfaces[1].pose=PoseMatrix(0,std::sin(.35f),0,std::cos(.35f),0,0,0);
     assert(room.Support({0,2,0},3,.03f,hit)&&hit.surface==1);

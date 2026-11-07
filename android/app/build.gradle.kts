@@ -2,7 +2,7 @@ plugins {
     id("com.android.application")
 }
 
-val questVersion = "0.9.1-quest-dev"
+val questVersion = "0.10.4-quest-dev"
 
 // ReChan-authored support files (fonts/textures/text) live at the repo root in
 // res/pc. They are synced into the APK assets and extracted on-device on first
@@ -46,7 +46,7 @@ android {
         applicationId = "org.rechan.quest"
         minSdk = 29
         targetSdk = 35
-        versionCode = 26
+        versionCode = 31
         versionName = questVersion
 
         ndk {

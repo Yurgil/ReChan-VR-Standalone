@@ -6,6 +6,8 @@
 #include "pddi/quest/MRInteraction.h"
 #include "pddi/quest/MRInteractionMode.h"
 #include "pddi/quest/ControllerPresence.h"
+#include "pddi/quest/ControllerAvailability.h"
+#include "pddi/quest/GameplayInputGate.h"
 #include "pddi/quest/MRTestObject.h"
 #include "pddi/quest/MRPortalRenderer.h"
 #include "pddi/quest/MRPortalSurfaceRenderer.h"
@@ -48,9 +50,12 @@ XrAction contactAction=XR_NULL_HANDLE;
 std::array<XrSpace,2> aimSpaces{},gripSpaces{};
 std::array<bool,2> controllerDown{};
 QuestHands trackedHands;
+bool opticalHandsActive=false;
+bool handSupported=false,handAim=false,handData=false,handSimultaneous=false;
 MRInteraction interaction;
 MRInteractionMode interactionMode;
 ControllerPresence controllerPresence;
+ControllerAvailability controllerAvailability;
 // Empty legacy probe for shared render/surface interfaces; gameplay never spawns it.
 MRTestObject testObject;
 MRCharacter character;
@@ -62,7 +67,8 @@ MRPortalSurface portalSurface;
 QuestRoomScene roomScene;
 bool jackieInteraction=false,roomStartPending=false,roomForceScan=false,scenePermissionAsked=false,scenePermissionDenied=false;
 XrTime interactionTime=0;
-bool suppressUntilNeutral=false;
+GameplayInputGate gameplayGate;
+bool gameplayInputBlocked=true;
 std::array<Mat4,2> referenceVP;
 std::array<XrPath,2> hands{};
 std::vector<XrSwapchainImageOpenGLESKHR> images;
@@ -80,8 +86,8 @@ bool portalEnabled=true;
 struct PortalUniforms { GLint model, eyes, bounds, enabled, transfer; };
 std::unordered_map<GLuint,PortalUniforms> portalUniforms;
 PortalPlacement vrPlacement,mrPlacement;
-constexpr float mrScales[]={.2f,.3f,.4f,.5f,.65f};
-int mrSize=1;
+constexpr float kDefaultMRScale=.3f;
+
 Mat4 cameraOptics;
 std::array<float,4> screenClip{-1,-1,1,1};
 XrFrameState frameState{XR_TYPE_FRAME_STATE};
@@ -104,17 +110,24 @@ void Check(XrResult result,const char* operation){
 void Fail(const std::exception& e){error=e.what();closing=true;__android_log_print(ANDROID_LOG_ERROR,"ReChanXR","%s",error.c_str());}
 XrPath Path(const char* value){XrPath path;XR_CHECK(xrStringToPath(instance,value,&path));return path;}
 Mat4 Pose(const XrPosef& p){return PoseMatrix(p.orientation.x,p.orientation.y,p.orientation.z,p.orientation.w,p.position.x,p.position.y,p.position.z);}
-void RefreshMRPlacement(){mrPlacement.SetCentered(vrPlacement.pose*Translation(0,0,-1.2f),-kPortalDepth,mrScales[mrSize]);}
+void RefreshMRPlacement(){mrPlacement.SetCentered(vrPlacement.pose*Translation(0,0,-1.2f),-kPortalDepth,kDefaultMRScale);}
+void SetOpticalHands(bool enabled){
+    enabled=enabled&&handSupported;
+    if(enabled==opticalHandsActive)return;
+    if(enabled){trackedHands.Initialize(instance,system,session,handAim,handData,handSimultaneous);trackedHands.Resume(session);}
+    else trackedHands.Shutdown();
+    opticalHandsActive=enabled;
+    Log(enabled?"MR hands: tracking ON (editing, Touch put down)":"MR hands: tracking OFF");
+}
 void CancelInteraction(){
-    if(interaction.Active())suppressUntilNeutral=true;
     interaction.Cancel();interactionTime=0;
     testObject.Reset();character.Cancel();
     portalSurface.Reset();
-    trackedHands.ClearInput();controllerPresence.Reset();controllerDown={};
+    SetOpticalHands(false);trackedHands.ClearInput();controllerPresence.Reset();controllerDown={};
 }
 void ResetInput(){
     CancelInteraction();
-    interactionMode.Reset();
+    interactionMode.Reset();gameplayGate.Reset();controllerAvailability.Reset();gameplayInputBlocked=true;
     for(int b=0;b<GamepadButton::COUNT;++b)androidbridge::PostGamepadButton(b,false);
     for(int a=0;a<GamepadAxis::COUNT;++a)androidbridge::PostGamepadAxis(a,a>=GamepadAxis::LeftTrigger?-1.f:0.f);
     androidbridge::PostGamepadConnected(false);
@@ -177,10 +190,15 @@ bool Button(XrAction action,XrPath hand=XR_NULL_PATH){
     XrActionStateBoolean value{XR_TYPE_ACTION_STATE_BOOLEAN};XR_CHECK(xrGetActionStateBoolean(session,&get,&value));
     return value.isActive&&value.currentState;
 }
-float Axis(XrAction action,XrPath hand){
+XrActionStateFloat FloatState(XrAction action,XrPath hand){
     XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO};get.action=action;get.subactionPath=hand;
     XrActionStateFloat value{XR_TYPE_ACTION_STATE_FLOAT};XR_CHECK(xrGetActionStateFloat(session,&get,&value));
-    return value.isActive?value.currentState:0;
+    return value;
+}
+float Axis(XrAction action,XrPath hand){const auto value=FloatState(action,hand);return value.isActive?value.currentState:0;}
+XrActionStateVector2f Stick(XrPath hand){
+    XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO};get.action=stickAction;get.subactionPath=hand;
+    XrActionStateVector2f value{XR_TYPE_ACTION_STATE_VECTOR2F};XR_CHECK(xrGetActionStateVector2f(session,&get,&value));return value;
 }
 bool LocateController(XrAction action,XrSpace space,XrPath hand,Mat4& result){
     XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO};get.action=action;get.subactionPath=hand;
@@ -200,6 +218,7 @@ void UpdateInteraction(){
     interactionTime=frameState.predictedDisplayTime;
     std::array<MRPointer,2> pointers{};
     std::array<bool,2> held{};
+    const auto move=Stick(hands[0]),resize=Stick(hands[1]);
     const double now=std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
     for(int i=0;i<2;++i){
         pointers[i].valid=LocateController(aimAction,aimSpaces[i],hands[i],pointers[i].aim)&&LocateController(poseAction,gripSpaces[i],hands[i],pointers[i].grip);
@@ -207,8 +226,9 @@ void UpdateInteraction(){
         controllerDown[i]=trigger>=(controllerDown[i]?.02f:.05f)||grip>=(controllerDown[i]?.35f:.55f);
         pointers[i].down=controllerDown[i];
         const bool buttons=Button(thumbAction,hands[i])||(i?(Button(aAction)||Button(bAction)):(Button(xAction)||Button(yAction)||Button(menuAction)));
-        held[i]=controllerPresence.Update(i,Button(contactAction,hands[i]),trigger>.02f||grip>.1f||buttons,now);
+        held[i]=controllerPresence.Update(i,Button(contactAction,hands[i]),trigger>.02f||grip>.1f||buttons||((i?resize:move).isActive&&std::hypot((i?resize:move).currentState.x,(i?resize:move).currentState.y)>.1f),now);
     }
+    SetOpticalHands(!held[0]&&!held[1]);
     pointers=trackedHands.Locate(localSpace,interactionTime,pointers,held);
     XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
     if(XR_FAILED(xrLocateSpace(headSpace,localSpace,interactionTime,&head))||!(head.locationFlags&XR_SPACE_LOCATION_POSITION_VALID_BIT)){CancelInteraction();return;}
@@ -216,19 +236,25 @@ void UpdateInteraction(){
     testObject.Reset(); // Editing the window must not create a diagnostic cube.
     const bool useCharacter=jackieInteraction&&character.HasTarget();
     if(useCharacter){
-        const auto previous=character.State();
-        character.Update(pointers,mrPlacement,{head.pose.position.x,head.pose.position.y,head.pose.position.z},roomScene.Geometry(),interaction.Active(),interactionDt);
+        const auto previous=character.State();const bool wasMoving=character.Moving();const auto oldAction=character.Action();
+        MRCharacterInput input;
+        for(int i=0;i<2;++i)if(held[i]&&pointers[i].valid&&pointers[i].source==0)input.controllers|=1u<<i;
+        input.valid=input.controllers&&(head.locationFlags&XR_SPACE_LOCATION_ORIENTATION_VALID_BIT);
+        input.headPose=Pose(head.pose);
+        if((input.controllers&1)&&move.isActive){input.moveX=move.currentState.x;input.moveY=move.currentState.y;}
+        if(input.controllers&2){input.jumpTrigger=Axis(triggerAction,hands[1]);input.punch=Button(aAction);input.kick=Button(bAction);input.roll=Axis(gripAction,hands[1])>.55f;input.resize=resize.isActive?resize.currentState.y:0;}
+        character.Update(pointers,mrPlacement,{head.pose.position.x,head.pose.position.y,head.pose.position.z},roomScene.Geometry(),interaction.Active(),interactionDt,input);
         if(character.Consumed())interaction.Cancel();
         else interaction.Update(pointers,mrPlacement,{head.pose.position.x,head.pose.position.y,head.pose.position.z});
+        if(wasMoving!=character.Moving())__android_log_print(ANDROID_LOG_INFO,"ReChanXR","MR Jackie locomotion: %s",character.Moving()?"moving":"stopped");
+        if(oldAction!=character.Action())__android_log_print(ANDROID_LOG_INFO,"ReChanXR","MR Jackie action: %d",int(character.Action()));
         if(previous!=character.State())__android_log_print(ANDROID_LOG_INFO,"ReChanXR","MR Jackie state %d -> %d",int(previous),int(character.State()));
         portalSurface.Update(trackedHands.Visuals(),mrPlacement,testObject,interactionDt,character.Active()?&character.ContactPose():nullptr,character.Held());
-        if(character.Consumed())suppressUntilNeutral=true;
     }else{
         character.Cancel();
         interaction.Update(pointers,mrPlacement,{head.pose.position.x,head.pose.position.y,head.pose.position.z});
         portalSurface.Update(trackedHands.Visuals(),mrPlacement,testObject,interactionDt);
     }
-    if(interaction.Consumed())suppressUntilNeutral=true;
     if(wasActive!=interaction.Active())__android_log_print(ANDROID_LOG_INFO,"ReChanXR","MR window: %s",interaction.Active()?"grab":"release");
 }
 void SyncInput(){
@@ -242,7 +268,7 @@ void SyncInput(){
         const double now=std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
         interactionMode.Update(Button(thumbAction,hands[0]),Button(thumbAction,hands[1]),now);
         if(interactionMode.Changed()){
-            CancelInteraction();suppressUntilNeutral=true;
+            CancelInteraction();
             __android_log_print(ANDROID_LOG_INFO,"ReChanXR","MR interaction mode: %s",interactionMode.Editing()?"ON":"OFF");
             if(interactionMode.Editing()&&jackieInteraction&&roomScene.State()!=MRRoomState::Ready){roomStartPending=true;scenePermissionAsked=scenePermissionDenied=false;}
         }
@@ -252,37 +278,45 @@ void SyncInput(){
     UpdateInteraction();
     androidbridge::PostGamepadConnected(true);
     androidbridge::SetPhysicalPadConnected(true); // Suppress the imported phone touch overlay.
-    if(suppressUntilNeutral||interactionMode.Editing()){
-        bool neutral=true;
-        for(int i=0;i<2;++i){
-            neutral&=Axis(triggerAction,hands[i])<.02f&&Axis(gripAction,hands[i])<.1f;
-            XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO};get.action=stickAction;get.subactionPath=hands[i];
-            XrActionStateVector2f stick{XR_TYPE_ACTION_STATE_VECTOR2F};XR_CHECK(xrGetActionStateVector2f(session,&get,&stick));
-            neutral&=!stick.isActive||(std::fabs(stick.currentState.x)<.2f&&std::fabs(stick.currentState.y)<.2f);
-        }
-        neutral&=!Button(aAction)&&!Button(bAction)&&!Button(xAction)&&!Button(yAction);
-        neutral&=!Button(thumbAction,hands[0])&&!Button(thumbAction,hands[1]);
-        for(int b=0;b<GamepadButton::COUNT;++b)androidbridge::PostGamepadButton(b,false);
-        for(int a=0;a<GamepadAxis::COUNT;++a)androidbridge::PostGamepadAxis(a,a>=GamepadAxis::LeftTrigger?-1.f:0.f);
-        androidbridge::PostGamepadButton(GamepadButton::Start,Button(menuAction));
-        if(neutral&&!interaction.Active()&&!interactionMode.Editing())suppressUntilNeutral=false;
-        return;
-    }
-    const std::array<std::pair<XrAction,int>,5> buttons={{{aAction,GamepadButton::A},{bAction,GamepadButton::B},{xAction,GamepadButton::X},{yAction,GamepadButton::Y},{menuAction,GamepadButton::Start}}};
-    for(const auto& [action,button]:buttons)androidbridge::PostGamepadButton(button,Button(action));
+    const double inputNow=std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const auto previousMask=controllerAvailability.Mask();
+    std::array<bool,2> activeHands{};
     for(int hand=0;hand<2;++hand){
-        XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO};get.action=stickAction;get.subactionPath=hands[hand];
-        XrActionStateVector2f value{XR_TYPE_ACTION_STATE_VECTOR2F};XR_CHECK(xrGetActionStateVector2f(session,&get,&value));
-        float x=value.isActive?value.currentState.x:0,y=value.isActive?-value.currentState.y:0;
+        // isActive on one stick is not a test of the entire Touch pair.
+        // Trigger/grip actions can remain usable during a profile transition.
+        activeHands[hand]=Stick(hands[hand]).isActive||FloatState(triggerAction,hands[hand]).isActive||FloatState(gripAction,hands[hand]).isActive;
+    }
+    controllerAvailability.Update(activeHands[0],activeHands[1],inputNow);
+    const bool blocked=controllerAvailability.Blocked(interactionMode.Editing(),inputNow);
+    if(previousMask!=controllerAvailability.Mask())
+        __android_log_print(ANDROID_LOG_INFO,"ReChanXR","Touch action availability: mask=%u (left=1 right=2)",controllerAvailability.Mask());
+    if(blocked!=gameplayInputBlocked){
+        __android_log_print(ANDROID_LOG_INFO,"ReChanXR","Gameplay input: %s (editing=%d TouchMask=%u hands=%d)",blocked?"suspended":"ready",interactionMode.Editing(),controllerAvailability.Mask(),opticalHandsActive);
+    }
+    gameplayInputBlocked=blocked;
+    const std::array<std::pair<XrAction,int>,5> buttons={{{aAction,GamepadButton::A},{bAction,GamepadButton::B},{xAction,GamepadButton::X},{yAction,GamepadButton::Y},{menuAction,GamepadButton::Start}}};
+    uint32_t raw=0;
+    for(const auto& [action,button]:buttons)if(Button(action))raw|=1u<<button;
+    for(int hand=0;hand<2;++hand){
+        if(Axis(gripAction,hands[hand])>.55f)raw|=1u<<(hand?GamepadButton::RightBumper:GamepadButton::LeftBumper);
+        const bool click=mrInput?(hand==1&&interactionMode.Status()):Button(thumbAction,hands[hand]);
+        if(click)raw|=1u<<(hand?GamepadButton::RightThumb:GamepadButton::LeftThumb);
+    }
+    const auto filtered=gameplayGate.FilterButtons(raw,blocked);
+    for(int button=0;button<GamepadButton::COUNT;++button)
+        androidbridge::PostGamepadButton(button,(filtered&(1u<<button))!=0);
+    // The menu button remains available while the game world is suspended.
+    androidbridge::PostGamepadButton(GamepadButton::Start,Button(menuAction));
+    for(int hand=0;hand<2;++hand){
+        const auto value=Stick(hands[hand]);
+        float x=!blocked&&value.isActive?value.currentState.x:0,y=!blocked&&value.isActive?-value.currentState.y:0;
         const float length=std::sqrt(x*x+y*y);
         if(length<0.18f)x=y=0;
         else{const float scale=(std::min(length,1.f)-0.18f)/(0.82f*length);x*=scale;y*=scale;}
         androidbridge::PostGamepadAxis(hand?GamepadAxis::RightX:GamepadAxis::LeftX,x);
         androidbridge::PostGamepadAxis(hand?GamepadAxis::RightY:GamepadAxis::LeftY,y);
-        androidbridge::PostGamepadAxis(hand?GamepadAxis::RightTrigger:GamepadAxis::LeftTrigger,2*Axis(triggerAction,hands[hand])-1);
-        androidbridge::PostGamepadButton(hand?GamepadButton::RightBumper:GamepadButton::LeftBumper,Axis(gripAction,hands[hand])>0.55f);
-        const bool click=mrInput?(hand==1&&interactionMode.Status()):Button(thumbAction,hands[hand]);
-        androidbridge::PostGamepadButton(hand?GamepadButton::RightThumb:GamepadButton::LeftThumb,click);
+        const float trigger=gameplayGate.FilterTrigger(hand,Axis(triggerAction,hands[hand]),blocked);
+        androidbridge::PostGamepadAxis(hand?GamepadAxis::RightTrigger:GamepadAxis::LeftTrigger,2*trigger-1);
     }
     const bool recenter=Button(thumbAction,hands[0]);
     if(!mrInput&&recenter&&!wasRecenter)recenterPending=true;
@@ -337,11 +371,15 @@ void UpdateMatrices(){
 
 void SetCharacterDrawCallback(void (*callback)()){characterDraw=callback;}
 void PublishCharacter(MRCharacterTarget target,const Mat4& gameView,const Mat4& world){
-    target.modelToPortal=cameraOptics*Scale(.001f)*gameView*world;
+    target.modelToPortal=cameraOptics*Scale(kDioramaWorldScale)*gameView*world;
     character.SetTarget(target);characterPublished=true;
 }
 void InvalidateCharacter(){character.Invalidate();}
 bool CharacterActive(){return character.Active();}
+bool WorldSimulationPaused(){
+    // A detached character owns the controls, but not the original level clock.
+    return sessionState!=XR_SESSION_STATE_FOCUSED||(!character.Active()&&gameplayInputBlocked);
+}
 const MRCharacter& Character(){return character;}
 void SetGameProjection(const Mat4& projection){cameraOptics=CameraOptics(projection);}
 bool MRInteractionEnabled(){return passthrough.Active()&&portalEnabled&&interactionMode.Editing();}
@@ -364,9 +402,6 @@ const char* RoomStatusToken(){
     }
 }
 int RoomSurfaceCount(){return std::count_if(roomScene.Geometry().surfaces.begin(),roomScene.Geometry().surfaces.end(),[](const auto& s){return s.located;});}
-int MRWindowSize(){int closest=0;for(int i=1;i<5;++i)if(std::fabs(mrScales[i]-mrPlacement.scale)<std::fabs(mrScales[closest]-mrPlacement.scale))closest=i;return closest;}
-void SetMRWindowSize(int index){CancelInteraction();mrSize=std::clamp(index,0,4);mrPlacement.SetCentered(mrPlacement.pose*Translation(0,0,-kPortalDepth*mrPlacement.scale),-kPortalDepth,mrScales[mrSize]);}
-float MRWindowWidth(int index){return 2*kPortalHalfWidth*mrScales[std::clamp(index,0,4)];}
 void SetMixedReality(bool enabled){CancelInteraction();interactionMode.Reset();mrRequested=enabled&&portalEnabled&&MixedRealityAvailable();}
 void SetPortalEnabled(bool enabled){portalEnabled=enabled;if(!enabled)mrRequested=false;}
 void SetAndroidContext(JavaVM* vm,jobject activity){javaVM=vm;javaActivity=activity;}
@@ -383,9 +418,9 @@ bool Initialize(EGLDisplay display,EGLConfig config,EGLContext context){
     character.Invalidate();characterPass=characterPublished=false;
     sessionState=XR_SESSION_STATE_UNKNOWN;
     recenterPending=true;wasRecenter=false;submittedFrames=0;imageIndex=0;
-    interaction.Cancel();interactionTime=0;suppressUntilNeutral=false;controllerDown={};
+    interaction.Cancel();interactionTime=0;gameplayGate.Reset();controllerAvailability.Reset();gameplayInputBlocked=true;controllerDown={};
     jackieInteraction=roomStartPending=roomForceScan=scenePermissionAsked=scenePermissionDenied=false;
-    portalEnabled=true;mrRequested=false;mrSize=1;vrPlacement.Reset(Mat4());RefreshMRPlacement();cameraOptics=Mat4();error.clear();
+    portalEnabled=true;mrRequested=false;vrPlacement.Reset(Mat4());RefreshMRPlacement();cameraOptics=Mat4();error.clear();
     try{
         if(!javaVM||!javaActivity)throw std::runtime_error("Android activity not provided to OpenXR");
         PFN_xrInitializeLoaderKHR initializeLoader=nullptr;
@@ -443,7 +478,8 @@ bool Initialize(EGLDisplay display,EGLConfig config,EGLContext context){
         spaceInfo.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_LOCAL;XR_CHECK(xrCreateReferenceSpace(session,&spaceInfo,&localSpace));
         spaceInfo.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_VIEW;XR_CHECK(xrCreateReferenceSpace(session,&spaceInfo,&headSpace));
         InitializeInput();
-        if(hasHands)trackedHands.Initialize(instance,system,session,hasHandAim,hasHandSource,hasSimultaneous);
+        handSupported=hasHands;handAim=hasHandAim;handData=hasHandSource;handSimultaneous=hasSimultaneous;
+        // Trackers are created only while editing with both Touch controllers put down.
         roomScene.Initialize(instance,session,hasRoom,hasSceneCapture);
         uint32_t count=0;XR_CHECK(xrEnumerateViewConfigurationViews(instance,system,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,0,&count,nullptr));
         if(count!=2)throw std::runtime_error("Expected a stereo OpenXR view configuration");
@@ -492,7 +528,7 @@ void PollEvents(){
                 if(event.type==XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED){
                     const auto& change=*reinterpret_cast<XrEventDataSessionStateChanged*>(&event);sessionState=change.state;
                     __android_log_print(ANDROID_LOG_INFO,"ReChanXR","Session state %d",sessionState);
-                    if(sessionState==XR_SESSION_STATE_READY){XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO};begin.primaryViewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;XR_CHECK(xrBeginSession(session,&begin));running=true;trackedHands.Resume(session);roomScene.Resume();}
+                    if(sessionState==XR_SESSION_STATE_READY){XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO};begin.primaryViewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;XR_CHECK(xrBeginSession(session,&begin));running=true;roomScene.Resume();}
                     else if(sessionState==XR_SESSION_STATE_STOPPING){running=false;ResetInput();passthrough.SetEnabled(false);XR_CHECK(xrEndSession(session));}
                     else if(sessionState==XR_SESSION_STATE_EXITING||sessionState==XR_SESSION_STATE_LOSS_PENDING){closing=true;ResetInput();}
                 }else if(event.type==XR_TYPE_EVENT_DATA_PASSTHROUGH_STATE_CHANGED_FB){
@@ -597,7 +633,7 @@ void Shutdown(){
 void UploadMeshMatrices(int location,const Mat4& gameView,const Mat4& model){
     std::array<Mat4,2> mvp;
     // Initial presentation scale; calibrated on-device in Q5 before acceptance.
-    for(int eye=0;eye<2;++eye)mvp[eye]=characterPass?referenceVP[eye]*characterTransform*model:eyeVP[eye]*(portalEnabled?cameraOptics:Mat4())*Scale(0.001f)*gameView*model;
+    for(int eye=0;eye<2;++eye)mvp[eye]=characterPass?referenceVP[eye]*characterTransform*model:eyeVP[eye]*(portalEnabled?cameraOptics:Mat4())*Scale(kDioramaWorldScale)*gameView*model;
     glUniformMatrix4fv(location,2,GL_FALSE,mvp[0].Data());
     GLint program=0;glGetIntegerv(GL_CURRENT_PROGRAM,&program);
     auto found=portalUniforms.find(program);
@@ -611,7 +647,7 @@ void UploadMeshMatrices(int location,const Mat4& gameView,const Mat4& model){
         found=portalUniforms.emplace(program,uniforms).first;
     }
     const auto& u=found->second;
-    const Mat4 modelToPortal=characterPass?mrPlacement.ReferenceToLocal()*characterTransform*model:(portalEnabled?cameraOptics:Mat4())*Scale(0.001f)*gameView*model;
+    const Mat4 modelToPortal=characterPass?mrPlacement.ReferenceToLocal()*characterTransform*model:(portalEnabled?cameraOptics:Mat4())*Scale(kDioramaWorldScale)*gameView*model;
     glUniformMatrix4fv(u.model,1,GL_FALSE,modelToPortal.Data());
     glUniform3fv(u.eyes,2,portalEyes.data());
     glUniform3f(u.bounds,kPortalHalfWidth,kPortalHalfHeight,-kPortalDepth);
@@ -621,12 +657,12 @@ void UploadMeshMatrices(int location,const Mat4& gameView,const Mat4& model){
 
 bool IsBoundsVisible(const Mat4& gameView,const Mat4& model,const float* low,const float* high){
     if(!frameBegun||!renderable)return true;
-    for(int eye=0;eye<2;++eye)if(BoxInFrustum(eyeVP[eye]*(portalEnabled?cameraOptics:Mat4())*Scale(0.001f)*gameView*model,low,high))return true;
+    for(int eye=0;eye<2;++eye)if(BoxInFrustum(eyeVP[eye]*(portalEnabled?cameraOptics:Mat4())*Scale(kDioramaWorldScale)*gameView*model,low,high))return true;
     return false;
 }
 bool IsPolygonVisible(const Mat4& gameView,const Mat4& model,const float* xyz,int count){
     if(!frameBegun||!renderable)return true;
-    for(int eye=0;eye<2;++eye)if(PolygonInFrustum(eyeVP[eye]*(portalEnabled?cameraOptics:Mat4())*Scale(0.001f)*gameView*model,xyz,count,true,cameraOptics.m[0]<0))return true;
+    for(int eye=0;eye<2;++eye)if(PolygonInFrustum(eyeVP[eye]*(portalEnabled?cameraOptics:Mat4())*Scale(kDioramaWorldScale)*gameView*model,xyz,count,true,cameraOptics.m[0]<0))return true;
     return false;
 }
 

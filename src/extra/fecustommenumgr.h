@@ -93,7 +93,6 @@ enum EntryBinding : u8 {
     EntryBinding_Language,
 #if defined(RC_PLATFORM_QUEST)
     EntryBinding_QuestMR,
-    EntryBinding_QuestMRSize,
     EntryBinding_QuestJackie,
 #endif
     EntryBinding_DisplayResolution,

@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/rechan-quest-math.XXXXXX")"
-trap 'rm -f "$OUT/math-test" "$OUT/timing-test" "$OUT/input-test" "$OUT/lifecycle-test" "$OUT/interaction-test" "$OUT/transfer-test" "$OUT/surface-test" "$OUT/room-test" "$OUT/character-test"; rmdir "$OUT"' EXIT
+trap 'rm -f "$OUT/math-test" "$OUT/timing-test" "$OUT/input-test" "$OUT/lifecycle-test" "$OUT/interaction-test" "$OUT/transfer-test" "$OUT/surface-test" "$OUT/room-test" "$OUT/character-test" "$OUT/motion-test" "$OUT/slate-test"; rmdir "$OUT"' EXIT
 FLAGS=()
 if [[ "$(uname -s)" == Darwin ]]; then
     SDK="$(xcrun --show-sdk-path)"
@@ -25,6 +25,12 @@ fi
 
 "${CXX:-c++}" -std=c++20 "${FLAGS[@]}" -I "$ROOT/vendor/libp3d" "$ROOT/tests/quest/character_test.cpp" "$ROOT/vendor/libp3d/pddi/quest/MRCharacter.cpp" "$ROOT/vendor/libp3d/pddi/quest/MRRoomGeometry.cpp" -o "$OUT/character-test"
 "$OUT/character-test"
+
+"${CXX:-c++}" -std=c++20 "${FLAGS[@]}" -I "$ROOT/vendor/libp3d" "$ROOT/tests/quest/character_motion_test.cpp" "$ROOT/vendor/libp3d/pddi/quest/MRCharacter.cpp" "$ROOT/vendor/libp3d/pddi/quest/MRRoomGeometry.cpp" -o "$OUT/motion-test"
+"$OUT/motion-test"
+
+"${CXX:-c++}" -std=c++20 "${FLAGS[@]}" -I "$ROOT/vendor/libp3d" "$ROOT/tests/quest/slate_test.cpp" -o "$OUT/slate-test"
+"$OUT/slate-test"
 
 "${CXX:-c++}" -std=c++20 -DRC_PLATFORM_QUEST "${FLAGS[@]}" -I "$ROOT/src" -I "$ROOT/vendor/libp3d" "$ROOT/tests/quest/timing_test.cpp" "$ROOT/src/gen/time.cpp" -o "$OUT/timing-test"
 "$OUT/timing-test"

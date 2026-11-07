@@ -21,6 +21,9 @@ private:
     std::array<XrPosef,2> filteredAim{},filteredGrip{};
     bool aim=false,data=false;
     PFN_xrResumeSimultaneousHandsAndControllersTrackingMETA resumeSimultaneous=nullptr;
+    PFN_xrPauseSimultaneousHandsAndControllersTrackingMETA pauseSimultaneous=nullptr;
+    XrSession simultaneousSession=XR_NULL_HANDLE;
+    bool simultaneousRunning=false;
     PFN_xrLocateHandJointsEXT locate=nullptr;
     PFN_xrDestroyHandTrackerEXT destroy=nullptr;
 };

@@ -1,3 +1,4 @@
+#include "extra/questcharacter.h"
 #include "ai/humanoid.h"
 #include "ai/activezn.h"
 #include "ai/humndata.h"
@@ -2240,6 +2241,9 @@ static constexpr s32 ONE_PUNCH_LAUNCH_LIFT = 6000;
 
 // PSX: HandleCollision__8HumanoidP5Thingle (HUMANOID.CPP:1997)
 void Humanoid::HandleCollision(Thing* other, s32 damage, ...) {
+#if defined(RC_PLATFORM_QUEST)
+    if(questcharacter::IsDetached(this)||questcharacter::IsDetached(other))return;
+#endif
     MARKFUNCTION(0x80064808);
     if (!other) {
         return;
@@ -2598,6 +2602,9 @@ void Humanoid::Teleport(const LVector& newPos) {
 
 // PSX: SubtractHitPoints__8HumanoidUs (HUMANOID.CPP:9388, 0x8006CEB4)
 s32 Humanoid::SubtractHitPoints(u16 hitPoints) {
+#if defined(RC_PLATFORM_QUEST)
+    if(questcharacter::IsDetached(this))return health;
+#endif
     MARKFUNCTION(0x8006CEB4);
 
     const u16 healthBefore = health;

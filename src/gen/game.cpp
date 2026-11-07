@@ -3,6 +3,7 @@
 #include "gen/game.h"
 #if defined(RC_PLATFORM_QUEST)
 #include "pddi/quest/QuestXR.h"
+#include "pddi/quest/QuestSlateState.h"
 #endif
 #if defined(RC_PLATFORM_ANDROID)
 #include "extra/touchcontrols.h"
@@ -81,6 +82,32 @@ s32 g_directorActive = 0;   // gp+20: directorTimeOut gate used by gsPlayState
 s32 g_feInitialized = 0;    // gp+88: FE memory puddle initialized
 
 bool g_drawDebugConsole = false;
+
+#if defined(RC_PLATFORM_QUEST)
+namespace {
+questxr::QuestSlateState questSlate;
+void PublishQuestSlate(){questxr::SetPortalCaption(questSlate.Scene().c_str(),questSlate.Take());}
+void UpdateQuestSlate(Game* game,GameState state){
+    switch(state){
+        case GameState::PrePlay:{
+            auto* world=game->GetWorld();
+            if(world&&!world->IsCurrentLevelHub()&&world->GetCurLevelID()>0){
+                const auto level=world->GetCurrentLevelIndex(),part=world->GetCurrentPetalIndex();
+                questSlate.EnterLevel(level,part,world->GetLevelNameFromIndex(level),world->GetPetalNameFromIndex(level,part));
+            }else questSlate.MainMenu();
+            break;
+        }
+        // Pause/options preserve the stage/take; leaving for the hub resets them.
+        case GameState::Null:case GameState::Intro:case GameState::Title:case GameState::TitleLoop:
+        case GameState::OpenFE:case GameState::FE:case GameState::OpenLocationMenu:
+        case GameState::EndGame:case GameState::EndGameLoop:case GameState::End:
+            questSlate.MainMenu();break;
+        default:break;
+    }
+    PublishQuestSlate();
+}
+}
+#endif
 
 const Game::StateFunc Game::sStateTable[static_cast<int>(GameState::COUNT)] = {
     gsNullState,
@@ -306,6 +333,9 @@ void Game::InternalClose() {
 
 // PSX: InternalReset__4Game
 void Game::InternalReset() {
+#if defined(RC_PLATFORM_QUEST)
+    questSlate.MainMenu();PublishQuestSlate();
+#endif
     for (ccMinNode* n = managerList.head; n; n = n->next) {
         Manager* mgr = static_cast<Manager*>(n);
         mgr->Reset();
@@ -733,6 +763,9 @@ void Game::SetState(GameState s) {
     s32 idx = static_cast<s32>(s);
     stateFunc = sStateTable[idx];
     state = s;
+#if defined(RC_PLATFORM_QUEST)
+    UpdateQuestSlate(this,state);
+#endif
 
 #if HIGH_FPS_PLAY_PRESENTATION
     auto usesFixedLogicStep = [](GameState s) {
@@ -1528,8 +1561,19 @@ bool Game::gsPrePlayState(Game* game) {
 bool Game::gsPlayState(Game* game) {
     MARKFUNCTION(0x80029C6C); // gsPlayState
 #if defined(RC_PLATFORM_QUEST)
-    if(questxr::CharacterActive()){
+    if(questxr::WorldSimulationPaused()){
         if(g_time)g_time->HoldPlayPresentation();
+        // Drain host presses during an XR handoff; preserve access to pause.
+        if(g_inputManager){
+            g_inputManager->CommitHostPads();g_inputManager->Step();
+            if((g_inputManager->GetControlVal(0)&PsxPad::Start)&&(!g_director||g_director->scriptState==0)){
+#if CUSTOM_MENU
+                World* world=game->GetWorld();
+                g_feCustomMenuMgr->Activate(world&&world->GetCurLevelID()==7?MenuPage_Frontend:MenuPage_Pause);
+#endif
+                game->SetState(GameState::Menu);Shock(ShockEnum::SHOCK_CLEAR);
+            }
+        }
         ProcessHandlerList(game->handlerSet2.handlerList);
         return true;
     }
@@ -2168,6 +2212,9 @@ bool Game::gsDetermineNextGameState(Game* game) {
             game->SetState(GameState::EndGame);
         }
         else {
+#if defined(RC_PLATFORM_QUEST)
+            questSlate.Retry();PublishQuestSlate();
+#endif
             game->SetState(GameState::QueuePetalLoad);
         }
     }

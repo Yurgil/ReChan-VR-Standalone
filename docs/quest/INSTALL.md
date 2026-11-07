@@ -75,7 +75,10 @@ extracted resources; switching data sets requires a separate migration/reset.
 VR is the startup mode. In Options, enable Mixed Reality for passthrough. Both stick
 clicks toggle editing; a cyan outline indicates that it is active. Grab the frame
 with controllers, or set Touch down, wait 1.25 seconds and pinch with tracked hands.
-Editing the window does not create a test cube.
+Editing the window does not create a test cube. There is no size selector in
+Options; resize with hands or controllers. Optical hand trackers are inactive
+during normal gameplay and while Touch is held, and activate only after both
+controllers have been put down in editing mode.
 
 Room interaction is optional. Enable **Interact with Jackie** on the Room interaction
 page, then enter MR editing. Only this opt-in requests room data. A saved Quest scan
@@ -83,9 +86,21 @@ is reused; if absent, use the system scanning setup. A room scan is unnecessary
 for ordinary VR/MR gameplay or window placement.
 
 In a playable level, pinch near Jackie's projected body at the opening and pull
-him out. Outside he is a miniature of 7 cm reference standing height. Put him on a
+him out. Outside he is a miniature of 10 cm reference standing height. Put him on a
 scanned surface, or take him back behind the opening and release to resume the
-original game. Controller locomotion for the miniature is not implemented yet.
+original game. Keep interaction mode enabled after placing him, pick up Touch,
+and centre the sticks/release all buttons once. The left stick moves him relative
+to your head direction; right trigger jumps (5% travel), A punches, B kicks and
+right grip rolls. Right stick up/down adjusts standing height between 5 cm and
+1.566 m, starting at 10 cm. Feet stay on the surface and growth stops at scanned
+obstacles. The scan provides floor/table support, wall/furniture collisions
+and the boundary of the selected room. Mode exit returns the original player.
+The level keeps running after extraction, while the hidden original player is
+isolated from movement and combat. Before extraction, window editing or sustained loss of
+both Touch controllers pauses the level to protect against damage during input handoff. Movement resumes on mode exit;
+a held button/trigger needs its own release and never blocks the rest of the pad.
+Room locomotion is experimental in 0.10.3; no enemies from the original level are
+spawned into the scanned room.
 
 ## Troubleshooting
 
@@ -101,3 +116,15 @@ original game. Controller locomotion for the miniature is not implemented yet.
 For bugs, include app version, level, steps, VR/MR mode and relevant log excerpts.
 Do not attach disc images, extracted resources, saves, room scans or passthrough
 recordings to public reports. Build and log commands are in [BUILDING.md](BUILDING.md).
+
+
+The clapperboard SCENE label shows the current stage, or MAIN MENU. TAKE starts
+at 01, increments after a death/restart in that stage, and resets on main-menu or
+game-over exit. Opening the pause/options menu does not reset it.
+
+
+Download preview APKs and their SHA256 checksums from
+[GitHub Releases](https://github.com/Yurgil/ReChan-VR-Standalone/releases).
+A temporary loss of a single Touch action/controller does not stop the level or
+suppress the other controller. Full input loss is debounced for 0.5 seconds before
+automatic protection; normal pause and headset focus handling remain available.

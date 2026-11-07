@@ -1,3 +1,4 @@
+#include "extra/questcharacter.h"
 #include "ai/colfight.h"
 #include "ai/humanoid.h"
 #include "gen/psxmath_helpers.h"
@@ -300,6 +301,9 @@ s32 CheckAttack(
 
 // PSX: Set__17FightingCollisionPC8HumanoidT1 (COLFIGHT.CPP:849, 0x80072FB4)
 s32 Set(const Humanoid* source, const Humanoid* target) {
+#if defined(RC_PLATFORM_QUEST)
+    if(questcharacter::IsDetached(source)||questcharacter::IsDetached(target))return 0;
+#endif
     MARKFUNCTION(0x80072FB4);
 
     const s32 sourceIndex = FindHumanoid(source);

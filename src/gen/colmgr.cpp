@@ -1,3 +1,4 @@
+#include "extra/questcharacter.h"
 #include "gen/colmgr.h"
 #include "gen/colsect.h"
 #include "gen/colwall.h"
@@ -701,6 +702,9 @@ void HandleThingEnvironmentCollisions(ccList& thingList) {
 
     for (ccMinNode* node = thingList.head; node != nullptr; node = node->next) {
         DynamicThing* thing = static_cast<DynamicThing*>(node);
+#if defined(RC_PLATFORM_QUEST)
+        if(questcharacter::IsDetached(thing))continue;
+#endif
 
         if ((thing->flags & TF_MODEL_CREATED) == 0) {
             continue;
@@ -829,6 +833,9 @@ void HandleHumanoidObstacleCollisions(ccList& humanoidList) {
     for (ccMinNode* node = humanoidList.head; node != nullptr;) {
         ccMinNode* next = node->next;
         DynamicThing* thing = (DynamicThing*)node;
+#if defined(RC_PLATFORM_QUEST)
+        if(questcharacter::IsDetached(thing)){node=next;continue;}
+#endif
         if (thing->flags & TF_MODEL_CREATED) {
             Obstacle::HandleHumanoidObstacleCollision((Humanoid*)thing);
         }
@@ -867,6 +874,9 @@ void HandleHumanoidPickupCollisions(ccList& humanoidList, ccList& pickupList) {
 
     for (ccMinNode* hNode = humanoidList.head; hNode != nullptr;) {
         ccMinNode* hNext = hNode->next;
+#if defined(RC_PLATFORM_QUEST)
+        if(questcharacter::IsDetached(static_cast<Thing*>(hNode))){hNode=hNext;continue;}
+#endif
         Humanoid* humanoid = static_cast<Humanoid*>(static_cast<Thing*>(hNode));
 
         if (humanoid->flags & TF_MODEL_CREATED) {

@@ -1,3 +1,4 @@
+#include "extra/questcharacter.h"
 #include "gen/ai.h"
 #include "gen/game.h"
 #include "gen/director.h"
@@ -597,6 +598,9 @@ Thing* AI::AddThingNoTagList(const char* name, u16 type,
 
 // PSX: HandleHumanoidHumanoidCollision__FP8HumanoidT0 (AI.CPP:986, 0x80055584)
 static void HandleHumanoidHumanoidCollision(Humanoid* a, Humanoid* b) {
+#if defined(RC_PLATFORM_QUEST)
+    if(questcharacter::IsDetached(a)||questcharacter::IsDetached(b))return;
+#endif
     const s32 yTolerance = 0x300;
     const s32 xzRadius = humanoidVolumeRadius;
     const s32 stateA = a->actionState;
@@ -845,6 +849,9 @@ void AI::privMoveList(ccList& list) {
     for (ccMinNode* n = list.head; n;) {
         Thing* thing = static_cast<Thing*>(n);
         ccMinNode* nextNode = n->next;
+#if defined(RC_PLATFORM_QUEST)
+        if(questcharacter::IsDetached(thing)){n=nextNode;continue;}
+#endif
 
         u32 fl = thing->flags;
         if (!(fl & TF_DEAD)) {
@@ -876,6 +883,9 @@ void AI::UpdatePositions(ccList& list) {
     MARKFUNCTION(0x80055BE4);
     for (ccMinNode* n = list.head; n; n = n->next) {
         Thing* thing = static_cast<Thing*>(n);
+#if defined(RC_PLATFORM_QUEST)
+        if(questcharacter::IsDetached(thing))continue;
+#endif
         thing->UpdatePosition();
     }
 }
